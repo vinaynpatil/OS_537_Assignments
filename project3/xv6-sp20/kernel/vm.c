@@ -315,7 +315,13 @@ copyuvm(pde_t *pgdir, uint sz)
     if((mem = kalloc()) == 0)
       goto bad;
     memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(d, (void*)i, PGSIZE, PADDR(mem), PTE_W|PTE_U) < 0)
+
+    int flags = PTE_U;
+    if((*pte & PTE_W) == PTE_W){
+      flags = PTE_W | flags;
+    }
+
+    if(mappages(d, (void*)i, PGSIZE, PADDR(mem), flags) < 0)
       goto bad;
   }
   return d;
@@ -367,18 +373,18 @@ copyout(pde_t *pgdir, uint va, void *p, uint len)
 
 int
 mprotect_helper(void *addr, int len){
-  void * curr_addr;
+  int curr_addr;
   for(int i=0;i<len;i++){
-    curr_addr = addr + (i*PGSIZE);
-    if(walkpgdir(proc->pgdir, curr_addr, 0) == 0){
+    curr_addr = (int)addr + (i*PGSIZE);
+    if(walkpgdir(proc->pgdir, (void *)curr_addr, 0) == 0){
       return -1;
     }
   }
 
   pte_t *pte;
   for(int i=0;i<len;i++){
-    curr_addr = addr + (i*PGSIZE);
-    pte = walkpgdir(proc->pgdir, curr_addr, 0);
+    curr_addr = (int)addr + (i*PGSIZE);
+    pte = walkpgdir(proc->pgdir, (void *)curr_addr, 0);
     *pte = *pte & (~ PTE_W);
   }
 
@@ -390,18 +396,18 @@ mprotect_helper(void *addr, int len){
 int
 munprotect_helper(void *addr, int len)
 {
-  void * curr_addr;
+  int curr_addr;
   for(int i=0;i<len;i++){
-    curr_addr = addr + (i*PGSIZE);
-    if(walkpgdir(proc->pgdir, curr_addr, 0) == 0){
+    curr_addr = (int)addr + (i*PGSIZE);
+    if(walkpgdir(proc->pgdir,(void *)curr_addr, 0) == 0){
       return -1;
     }
   }
 
   pte_t *pte;
   for(int i=0;i<len;i++){
-    curr_addr = addr + (i*PGSIZE);
-    pte = walkpgdir(proc->pgdir, curr_addr, 0);
+    curr_addr = (int)addr + (i*PGSIZE);
+    pte = walkpgdir(proc->pgdir, (void *)curr_addr, 0);
     *pte = *pte | PTE_W;
   }
 

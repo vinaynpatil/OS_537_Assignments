@@ -93,39 +93,40 @@ sys_uptime(void)
 int
 sys_mprotect(void)
 {
-  void *addr;
-  if (argptr(0, (void *)&addr, sizeof(*addr)) < 0){
-    return -1; // Failure
+  int addr;
+  if (argint(0, &addr) < 0){
+    return -1; 
   }
 
   int len;
   if(argint(1, &len) < 0)
     return -1;
 
-  return mprotect(addr,len);
+  return mprotect((void *)addr,len);
 }
 
 int
 sys_munprotect(void)
 {
-  void *addr;
-  if (argptr(0, (void *)&addr, sizeof(*addr)) < 0){
-    return -1; // Failure
+  int addr;
+  if (argint(0, &addr) < 0){
+    return -1;
   }
 
   int len;
   if(argint(1, &len) < 0)
     return -1;
-  return munprotect(addr,len);
+  return munprotect((void *)addr,len);
 }
 
 int sys_dump_allocated(void){
   int *frames;
-  if (argint(0, (int *)&frames) < 0){
-    return -1; // Failure
+  if(argint(0, (int *)&frames)<0){
+    return -1;
   }
 
   int numframes;
+
   if(argint(1, &numframes) < 0)
     return -1;
   return dump_allocated(frames,numframes);

@@ -109,8 +109,9 @@ int dump_allocated_helper(int *frames, int numframes) {
   int index = 0;
 
   for(int i = frames_index-1;i>=(frames_index-numframes);i--){
-    frames[index] = frames_history[i];
+    frames[index] = frames_history[i];;
     index++;
   }
+
   return 0;
 }

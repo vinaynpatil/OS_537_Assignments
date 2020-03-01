@@ -448,21 +448,21 @@ procdump(void)
 int
 mprotect(void *addr, int len)
 {
-  if(((uint)addr % PGSIZE != 0) || (len <= 0) || (((uint)addr + (len*PGSIZE))>=USERTOP)){
+  if(((int)addr % PGSIZE != 0) || (len <= 0) || (((int)addr + (len*PGSIZE))>=USERTOP)){
     return -1;
   }
 
-  return mprotect_helper(&addr, len);
+  return mprotect_helper(addr, len);
 }
 
 int
 munprotect(void *addr, int len)
 {
-  if(((uint)addr % PGSIZE != 0) || (len <= 0) || (((uint)addr + (len*PGSIZE))>=USERTOP)){
+  if(((int)addr % PGSIZE != 0) || (len <= 0) || (((int)addr + (len*PGSIZE))>=USERTOP)){
     return -1;
   }
 
-  return munprotect_helper(&addr, len);
+  return munprotect_helper(addr, len);
 }
 
 int 
