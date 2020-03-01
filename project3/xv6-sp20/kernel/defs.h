@@ -109,6 +109,9 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 void            yield(void);
+int             mprotect(void *, int);
+int             munprotect(void *, int);
+int             dump_allocated(int *, int);
 
 // swtch.S
 void            swtch(struct context**, struct context*);
@@ -168,6 +171,9 @@ pde_t*          copyuvm(pde_t*, uint);
 void            switchuvm(struct proc*);
 void            switchkvm(void);
 int             copyout(pde_t*, uint, void*, uint);
+int             mprotect_helper(void *, int);
+int             munprotect_helper(void *, int);
+int             dump_allocated_helper(int *, int);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x)/sizeof((x)[0]))

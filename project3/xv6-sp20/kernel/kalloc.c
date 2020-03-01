@@ -8,6 +8,11 @@
 #include "mmu.h"
 #include "spinlock.h"
 
+int current_count =0;
+
+int *frames_history[512];
+int frames_index = 0;
+
 struct run {
   struct run *next;
 };
@@ -62,10 +67,49 @@ kalloc(void)
   struct run *r;
 
   acquire(&kmem.lock);
-  r = kmem.freelist;
-  if(r)
+  if(current_count==0 || current_count==2){
+    r = kmem.freelist;
+    current_count = 0;
+  }
+
+  else if(current_count==1){
+    if(kmem.freelist==NULL){
+      release(&kmem.lock);
+      return NULL;
+    }
+    else{
+      r = kmem.freelist;
+    }
+  }
+  
+  if(r){
     kmem.freelist = r->next;
+    current_count++;
+    if(current_count==1 && kmem.freelist){
+      kmem.freelist = kmem.freelist->next;
+      current_count++;
+    }
+  }
   release(&kmem.lock);
+  
+  if(r!=NULL){
+    frames_history[frames_index] = r;
+    frames_index++;
+  }
+
   return (char*)r;
 }
 
+
+int dump_allocated_helper(int *frames, int numframes) {
+  if(numframes>frames_index){
+    return -1;
+  }
+
+  int index = 0;
+
+  for(int i = frames_index-1;i>=(frames_index-numframes);i--){
+    frames[index] = frames_history[i];
+    index++;
+  }
+}

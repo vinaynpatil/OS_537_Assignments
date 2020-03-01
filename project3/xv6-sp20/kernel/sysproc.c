@@ -88,3 +88,48 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+
+int
+sys_mprotect(void)
+{
+  void *addr;
+  if (argptr(0, (void *)&addr, sizeof(*addr)) < 0){
+    return -1; // Failure
+  }
+
+  int len;
+
+  if(argint(1, &len) < 0)
+    return -1;
+
+  return mprotect(addr,len);
+}
+
+int
+sys_munprotect(void)
+{
+  void *addr;
+  if (argptr(0, (void *)&addr, sizeof(*addr)) < 0){
+    return -1; // Failure
+  }
+
+  int len;
+
+  if(argint(1, &len) < 0)
+    return -1;
+  return munprotect(addr,len);
+}
+
+int sys_dump_allocated(void){
+  int *frames;
+  if (argptr(0, (int *)&frames, sizeof(*frames)) < 0){
+    return -1; // Failure
+  }
+
+  int numframes;
+
+  if(argint(1, &numframes) < 0)
+    return -1;
+  return dump_allocated(frames,numframes);
+}

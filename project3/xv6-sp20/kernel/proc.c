@@ -443,4 +443,31 @@ procdump(void)
   }
 }
 
+//My system calls
+
+int
+mprotect(void *addr, int len)
+{
+  if(((uint)addr % PGSIZE != 0) || (len <= 0) || ((addr + (len*PGSIZE))>=USERTOP)){
+    return -1;
+  }
+
+  return mprotect_helper(&addr, len);
+}
+
+int
+munprotect(void *addr, int len)
+{
+  if(((uint)addr % PGSIZE != 0) || (len <= 0) || ((addr + (len*PGSIZE))>=USERTOP)){
+    return -1;
+  }
+
+  return munprotect_helper(&addr, len);
+}
+
+int 
+dump_allocated(int *frames, int numframes) 
+{
+  return dump_allocated_helper(frames, numframes);
+}
 
