@@ -99,7 +99,6 @@ sys_mprotect(void)
   }
 
   int len;
-
   if(argint(1, &len) < 0)
     return -1;
 
@@ -115,7 +114,6 @@ sys_munprotect(void)
   }
 
   int len;
-
   if(argint(1, &len) < 0)
     return -1;
   return munprotect(addr,len);
@@ -123,12 +121,11 @@ sys_munprotect(void)
 
 int sys_dump_allocated(void){
   int *frames;
-  if (argptr(0, (int *)&frames, sizeof(*frames)) < 0){
+  if (argint(0, (int *)&frames) < 0){
     return -1; // Failure
   }
 
   int numframes;
-
   if(argint(1, &numframes) < 0)
     return -1;
   return dump_allocated(frames,numframes);

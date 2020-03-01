@@ -448,7 +448,7 @@ procdump(void)
 int
 mprotect(void *addr, int len)
 {
-  if(((uint)addr % PGSIZE != 0) || (len <= 0) || ((addr + (len*PGSIZE))>=USERTOP)){
+  if(((uint)addr % PGSIZE != 0) || (len <= 0) || (((uint)addr + (len*PGSIZE))>=USERTOP)){
     return -1;
   }
 
@@ -458,7 +458,7 @@ mprotect(void *addr, int len)
 int
 munprotect(void *addr, int len)
 {
-  if(((uint)addr % PGSIZE != 0) || (len <= 0) || ((addr + (len*PGSIZE))>=USERTOP)){
+  if(((uint)addr % PGSIZE != 0) || (len <= 0) || (((uint)addr + (len*PGSIZE))>=USERTOP)){
     return -1;
   }
 

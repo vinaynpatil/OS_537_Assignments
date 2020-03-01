@@ -10,7 +10,7 @@
 
 int current_count =0;
 
-int *frames_history[512];
+int frames_history[512];
 int frames_index = 0;
 
 struct run {
@@ -93,7 +93,7 @@ kalloc(void)
   release(&kmem.lock);
   
   if(r!=NULL){
-    frames_history[frames_index] = r;
+    frames_history[frames_index] = (uint)r;
     frames_index++;
   }
 
@@ -112,4 +112,5 @@ int dump_allocated_helper(int *frames, int numframes) {
     frames[index] = frames_history[i];
     index++;
   }
+  return 0;
 }
