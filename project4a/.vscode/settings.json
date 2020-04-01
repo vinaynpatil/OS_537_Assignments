@@ -1,5 +1,6 @@
 {
     "files.associations": {
-        "mapreduce.h": "c"
+        "mapreduce.h": "c",
+        "string.h": "c"
     }
 }

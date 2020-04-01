@@ -111,15 +111,21 @@ int getIndex(pthread_t thread_id)
 
 void MR_EmitToCombiner(char *key, char *value)
 {
+    char * new_key = strdup(key);
+    char * new_val = strdup(value);
+
     int thread_index = getIndex(pthread_self());
-    struct kvpair *node = createNewNode(key, value);
+    struct kvpair *node = createNewNode(new_key, new_val);
     insertNode(&mapper_table[thread_index], node);
 }
 
 void MR_EmitToReducer(char *key, char *value)
 {
-    struct kvpair *node = createNewNode(key, value);
-    insertNode(&reducer_table[partitionGenerator(key, num_partitions)], node);
+    char * new_key = strdup(key);
+    char * new_val = strdup(value);
+    
+    struct kvpair *node = createNewNode(new_key, new_val);
+    insertNode(&reducer_table[partitionGenerator(new_key, num_partitions)], node);
 }
 
 char *combine_get_next(char *key)
