@@ -6,66 +6,116 @@
 #include <semaphore.h>
 #include "mapreduce.h"
 
-struct kvpair
+struct node
 {
     char *key;
     char *value;
-    struct kvpair *next;
+    struct node *right_child; // right child
+    struct node *left_child;  // left child
 };
 
-struct kvpair *createNewNode(char *key, char *value)
+char *search(struct node *root, char *key)
 {
-    struct kvpair *node = (struct kvpair *)malloc(sizeof(struct kvpair));
-    node->key = key;
-    node->value = value;
-    node->next = NULL;
-    return node;
-}
-
-void insertNode(struct kvpair **head, struct kvpair *node)
-{
-    struct kvpair *current;
-
-    if (*head == NULL || strcmp((*head)->key, node->key) >= 0)
+    if (root == NULL || strcmp(key, root->key) == 0)
     {
-        node->next = *head;
-        *head = node;
-    }
-    else
-    {
-        current = *head;
-        while (current->next != NULL && strcmp(current->next->key, node->key) < 0)
+        if (root == NULL)
         {
-            current = current->next;
+            return NULL;
         }
-        node->next = current->next;
-        current->next = node;
+        else
+        {
+            return root->value;
+        }
     }
+    else if (strcmp(key, root->key) > 0)
+        return search(root->right_child, key);
+    else
+        return search(root->left_child, key);
 }
 
-void printList(struct kvpair *head)
+struct node *find_minimum(struct node *root)
 {
-    struct kvpair *temp = head;
-    while (temp != NULL)
-    {
-        printf("Key - %s  \n", temp->key);
-        printf("Value - %s  \n", temp->value);
-        temp = temp->next;
-    }
-}
-
-char *getNextMatchNode(struct kvpair **head, char *key)
-{
-    if (*head == NULL || strcmp((*head)->key, key) != 0)
-    {
+    if (root == NULL)
         return NULL;
+    else if (root->left_child != NULL)
+        return find_minimum(root->left_child);
+    return root;
+}
+
+void inorder(struct node *root)
+{
+    if (root != NULL) // checking if the root is not null
+    {
+        inorder(root->left_child);                                 // visiting left child
+        printf(" Key, Value - %s, %s \n", root->key, root->value); // printing data at root
+        inorder(root->right_child);                                // visiting right child
     }
+}
+
+//function to create a node
+struct node *new_node(char *key, char *value)
+{
+    struct node *p;
+    p = malloc(sizeof(struct node));
+    p->key = key;
+    p->value = value;
+    p->left_child = NULL;
+    p->right_child = NULL;
+
+    return p;
+}
+
+struct node *insert(struct node **root, char *key, char *value)
+{
+    //searching for the place to insert
+    if ((*root) == NULL)
+        return new_node(key, value);
+    else if (strcmp(key, (*root)->key) > 0) // x is greater. Should be inserted to right
+        (*root)->right_child = insert(&(*root)->right_child, key, value);
+    else // x is smaller should be inserted to left
+        (*root)->left_child = insert(&(*root)->left_child, key, value);
+    return (*root);
+}
+
+struct node *delete (struct node **root, char *key)
+{
+    if ((*root) == NULL)
+        return NULL;
+    if (strcmp(key, (*root)->key) > 0)
+        (*root)->right_child = delete (&(*root)->right_child, key);
+    else if (strcmp(key, (*root)->key) < 0)
+        (*root)->left_child = delete (&(*root)->left_child, key);
     else
     {
-        struct kvpair *current = *head;
-        *head = current->next;
-        return current->value;
+        //No Children
+        if ((*root)->left_child == NULL && (*root)->right_child == NULL)
+        {
+            free((*root));
+            return NULL;
+        }
+
+        //One ChildgetNextMatchNode
+        else if ((*root)->left_child == NULL || (*root)->right_child == NULL)
+        {
+            struct node *temp;
+            if ((*root)->left_child == NULL)
+                temp = (*root)->right_child;
+            else
+                temp = (*root)->left_child;
+            free((*root));
+            return temp;
+        }
+
+        //Two Children
+        else
+        {
+            struct node *temp = find_minimum((*root)->right_child);
+            (*root)->key = temp->key;
+            (*root)->value = temp->value;
+            (*root)->right_child = delete (&(*root)->right_child, temp->key);
+        }
     }
+    return (*root);
 }
 
 struct mapper_args
@@ -83,8 +133,8 @@ struct reducer_args
     int partition_number;
 };
 
-struct kvpair **mapper_table;
-struct kvpair **reducer_table;
+struct node **mapper_table;
+struct node **reducer_table;
 
 pthread_mutex_t lock;
 pthread_t *all_mappers;
@@ -111,32 +161,52 @@ int getIndex(pthread_t thread_id)
 
 void MR_EmitToCombiner(char *key, char *value)
 {
-    char * new_key = strdup(key);
-    char * new_val = strdup(value);
+    char *new_key = strdup(key);
+    char *new_val = strdup(value);
 
     int thread_index = getIndex(pthread_self());
-    struct kvpair *node = createNewNode(new_key, new_val);
-    insertNode(&mapper_table[thread_index], node);
+    mapper_table[thread_index] = insert(&mapper_table[thread_index], new_key, new_val);
 }
 
 void MR_EmitToReducer(char *key, char *value)
 {
-    char * new_key = strdup(key);
-    char * new_val = strdup(value);
-    
-    struct kvpair *node = createNewNode(new_key, new_val);
-    insertNode(&reducer_table[partitionGenerator(new_key, num_partitions)], node);
+    char *new_key = strdup(key);
+    char *new_val = strdup(value);
+
+    reducer_table[partitionGenerator(new_key, num_partitions)] = insert(&reducer_table[partitionGenerator(new_key, num_partitions)], new_key, new_val);
 }
 
 char *combine_get_next(char *key)
 {
     int thread_index = getIndex(pthread_self());
-    return getNextMatchNode(&mapper_table[thread_index], key);
+
+    char *return_val = search(mapper_table[thread_index], key);
+
+    if (return_val == NULL)
+    {
+        return NULL;
+    }
+    else
+    {
+        mapper_table[thread_index] = delete (&mapper_table[thread_index], key);
+    }
+
+    return return_val;
 }
 
 char *reduce_get_next(char *key, int partition_number)
 {
-    return getNextMatchNode(&reducer_table[partition_number], key);
+    char *return_val = search(reducer_table[partition_number], key);
+
+    if (return_val == NULL)
+    {
+        return NULL;
+    }
+    else
+    {
+        reducer_table[partition_number] = delete (&reducer_table[partition_number], key);
+    }
+    return return_val;
 }
 
 unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
@@ -145,7 +215,7 @@ unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
     int c;
     while ((c = *key++) != '\0')
         hash = hash * 33 + c;
-    
+
     return hash % num_partitions;
 }
 
@@ -193,8 +263,8 @@ void MR_Run(int argc, char *argv[],
             Combiner combine,
             Partitioner partition)
 {
-    mapper_table = malloc(sizeof(struct kvpair *) * num_mappers);
-    reducer_table = malloc(sizeof(struct kvpair *) * num_reducers);
+    mapper_table = malloc(sizeof(struct node *) * num_mappers);
+    reducer_table = malloc(sizeof(struct node *) * num_reducers);
 
     for (int i = 0; i < num_mappers; i++)
     {
