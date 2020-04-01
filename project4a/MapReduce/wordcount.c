@@ -28,8 +28,8 @@ void Combine(char *key, CombineGetter get_next) {
     }
     // Convert integer (count) to string (value)
     value = (char*)malloc(10 * sizeof(char));
-    // sprintf(value, "%d", count);
-    printf("%d", count);
+    sprintf(value, "%d", count);
+
     MR_EmitToReducer(key, value);
     free(value);
 }
@@ -55,6 +55,6 @@ void Reduce(char *key, ReduceStateGetter get_state,
 }
 
 int main(int argc, char *argv[]) {
-    MR_Run(argc, argv, Map, 5,
+    MR_Run(argc, argv, Map, 10,
         Reduce, 10, Combine, MR_DefaultHashPartition);
 }

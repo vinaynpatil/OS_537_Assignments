@@ -43,13 +43,27 @@ void insertNode(struct kvpair **head, struct kvpair *node)
     }
 }
 
-char* getNextMatchNode(struct kvpair **head, char *key){
-    if(*head == NULL || strcmp((*head)->key, key) == 0){
+void printList(struct kvpair *head)
+{
+    struct kvpair *temp = head;
+    while (temp != NULL)
+    {
+        printf("Key - %s  \n", temp->key);
+        printf("Value - %s  \n", temp->value);
+        temp = temp->next;
+    }
+}
+
+char *getNextMatchNode(struct kvpair **head, char *key)
+{
+    if (*head == NULL || strcmp((*head)->key, key) != 0)
+    {
         return NULL;
     }
-    else{
+    else
+    {
         struct kvpair *current = *head;
-        *head = (*head)->next;
+        *head = current->next;
         return current->value;
     }
 }
@@ -63,6 +77,12 @@ struct mapper_args
     int index;
 };
 
+struct reducer_args
+{
+    Reducer reduce;
+    int partition_number;
+};
+
 struct kvpair **mapper_table;
 struct kvpair **reducer_table;
 
@@ -74,7 +94,7 @@ int num_files;
 int num_map_threads;
 char **all_files;
 
-Partitioner partition;
+Partitioner partitionGenerator;
 int num_partitions;
 
 int getIndex(pthread_t thread_id)
@@ -92,23 +112,25 @@ int getIndex(pthread_t thread_id)
 void MR_EmitToCombiner(char *key, char *value)
 {
     int thread_index = getIndex(pthread_self());
-    struct kvpair *node = createNewNode(key,value);
-    insertNode(mapper_table[thread_index],node);
+    struct kvpair *node = createNewNode(key, value);
+    insertNode(&mapper_table[thread_index], node);
 }
 
 void MR_EmitToReducer(char *key, char *value)
 {
-    struct kvpair *node = createNewNode(key,value);
-    insertNode(mapper_table[partition(key,num_partitions)],node);
+    struct kvpair *node = createNewNode(key, value);
+    insertNode(&reducer_table[partitionGenerator(key, num_partitions)], node);
 }
 
-char* combine_get_next(char *key){
+char *combine_get_next(char *key)
+{
     int thread_index = getIndex(pthread_self());
-    return getNextMatchNode(mapper_table[thread_index],key);
+    return getNextMatchNode(&mapper_table[thread_index], key);
 }
 
-char* reduce_get_next(char *key, int partition_number){
-    return getNextMatchNode(reducer_table[partition_number],key);
+char *reduce_get_next(char *key, int partition_number)
+{
+    return getNextMatchNode(&reducer_table[partition_number], key);
 }
 
 unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
@@ -117,6 +139,7 @@ unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
     int c;
     while ((c = *key++) != '\0')
         hash = hash * 33 + c;
+    
     return hash % num_partitions;
 }
 
@@ -124,43 +147,37 @@ void *mapper_runner(void *map_args)
 {
     pthread_mutex_lock(&lock);
     struct mapper_args *temp_args = (struct mapper_args *)map_args;
-    printf("File name is %s\n", (*temp_args).file_name);
-    printf("Thread id is %ld\n", pthread_self());
-    printf("Thread Index is %d\n", getIndex(pthread_self()));
-    printf("Index is %d\n", (*temp_args).index);
-
     int curr_file_index = (*temp_args).index;
-
     (*temp_args).map((*temp_args).file_name);
 
     while ((curr_file_index + num_map_threads) < num_files)
     {
         curr_file_index = curr_file_index + num_map_threads;
         (*temp_args).map(all_files[curr_file_index]);
-        printf("Other File name is %s\n", all_files[curr_file_index]);
     }
 
-    if((*temp_args).combine!=NULL){
-        while(mapper_table[(*temp_args).index]!=NULL){
+    if ((*temp_args).combine != NULL)
+    {
+        while (mapper_table[(*temp_args).index] != NULL)
+        {
             (*temp_args).combine(mapper_table[(*temp_args).index]->key, combine_get_next);
         }
     }
 
     pthread_mutex_unlock(&lock);
 
-
     return NULL;
 }
 
-void *reducer_runner(void *reducer_args)
+void *reducer_runner(void *red_args)
 {
     pthread_mutex_lock(&lock);
-    struct mapper_args *temp_args = (struct mapper_args *)reducer_args;
-
-
+    struct reducer_args *temp_args = (struct reducer_args *)red_args;
+    while (reducer_table[(*temp_args).partition_number] != NULL)
+    {
+        (*temp_args).reduce(reducer_table[(*temp_args).partition_number]->key, NULL, reduce_get_next, (*temp_args).partition_number);
+    }
     pthread_mutex_unlock(&lock);
-
-
     return NULL;
 }
 
@@ -173,6 +190,16 @@ void MR_Run(int argc, char *argv[],
     mapper_table = malloc(sizeof(struct kvpair *) * num_mappers);
     reducer_table = malloc(sizeof(struct kvpair *) * num_reducers);
 
+    for (int i = 0; i < num_mappers; i++)
+    {
+        mapper_table[i] = NULL;
+    }
+
+    for (int i = 0; i < num_reducers; i++)
+    {
+        reducer_table[i] = NULL;
+    }
+
     all_mappers = malloc(num_mappers * sizeof(pthread_t *));
     mapper_count = num_mappers;
 
@@ -182,14 +209,14 @@ void MR_Run(int argc, char *argv[],
 
     num_map_threads = (num_mappers <= num_files) ? (num_mappers) : (num_files);
 
-    all_files = malloc( (argc-1) * sizeof(char*));
+    all_files = malloc((argc - 1) * sizeof(char *));
 
-    partition = partition;
+    partitionGenerator = partition;
     num_partitions = num_reducers;
 
-    for (int i = 0; i < argc-1; i++)
+    for (int i = 0; i < argc - 1; i++)
     {
-        all_files[i] = argv[i+1];
+        all_files[i] = argv[i + 1];
     }
 
     for (int i = 0; i < num_map_threads; i++)
@@ -210,25 +237,22 @@ void MR_Run(int argc, char *argv[],
         pthread_join(all_mappers[i], NULL);
     }
 
-
     all_reducers = malloc(num_reducers * sizeof(pthread_t *));
 
+    struct reducer_args *red_args;
 
     for (int i = 0; i < num_reducers; i++)
     {
-        map_args = malloc(sizeof(struct mapper_args));
+        red_args = malloc(sizeof(struct reducer_args));
 
-        (*map_args).combine = combine;
-        (*map_args).map = map;
-        (*map_args).file_name = argv[i + 1];
-        (*map_args).num_maps = num_mappers;
-        (*map_args).index = i;
+        (*red_args).reduce = reduce;
+        (*red_args).partition_number = i;
 
-        pthread_create(&all_reducers[i], NULL, reducer_runner, (void *)map_args);
+        pthread_create(&all_reducers[i], NULL, reducer_runner, (void *)red_args);
     }
 
-    for (int i = 0; i < num_map_threads; i++)
+    for (int i = 0; i < num_reducers; i++)
     {
-        pthread_join(all_mappers[i], NULL);
+        pthread_join(all_reducers[i], NULL);
     }
 }
