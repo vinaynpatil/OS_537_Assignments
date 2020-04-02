@@ -1,157 +1,56 @@
+#include "mapreduce.h"
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <pthread.h>
 #include <string.h>
-#include <sys/stat.h>
-#include <semaphore.h>
-#include "mapreduce.h"
+#include <assert.h>
+#define NUM_MAPS 888
 
-struct node
+int counter;
+pthread_mutex_t fileLock;
+int mapper_count;
+int reducer_count;
+int NUM_FILES;
+char **file_names;
+pthread_t *mapthreads;
+
+Partitioner partition_func;
+Mapper map_func;
+Reducer reduce_func;
+Combiner combine_func;
+
+typedef struct __v_node
+{
+    char *value;
+    struct __v_node *next;
+} v_node;
+typedef struct __k_node
 {
     char *key;
-    char *value;
-    struct node *right_child; // right child
-    struct node *left_child;  // left child
-};
-
-char *search(struct node *root, char *key)
+    v_node *head;
+    struct __k_node *next;
+} k_node;
+typedef struct __k_entry
 {
-    if (root == NULL || strcmp(key, root->key) == 0)
-    {
-        if (root == NULL)
-        {
-            return NULL;
-        }
-        else
-        {
-            return root->value;
-        }
-    }
-    else if (strcmp(key, root->key) > 0)
-        return search(root->right_child, key);
-    else
-        return search(root->left_child, key);
-}
-
-struct node *find_minimum(struct node *root)
+    k_node *head;
+    pthread_mutex_t lock;
+} k_entry;
+typedef struct __p_entry
 {
-    if (root == NULL)
-        return NULL;
-    else if (root->left_child != NULL)
-        return find_minimum(root->left_child);
-    return root;
-}
-
-void inorder(struct node *root)
-{
-    if (root != NULL) // checking if the root is not null
-    {
-        inorder(root->left_child);                                 // visiting left child
-        printf(" Key, Value - %s, %s \n", root->key, root->value); // printing data at root
-        inorder(root->right_child);                                // visiting right child
-    }
-}
-
-//function to create a node
-struct node *new_node(char *key, char *value)
-{
-    struct node *p;
-    p = malloc(sizeof(struct node));
-    p->key = key;
-    p->value = value;
-    p->left_child = NULL;
-    p->right_child = NULL;
-
-    return p;
-}
-
-struct node *insert(struct node **root, char *key, char *value)
-{
-    //searching for the place to insert
-    if ((*root) == NULL)
-        return new_node(key, value);
-    else if (strcmp(key, (*root)->key) > 0) // x is greater. Should be inserted to right
-        (*root)->right_child = insert(&(*root)->right_child, key, value);
-    else // x is smaller should be inserted to left
-        (*root)->left_child = insert(&(*root)->left_child, key, value);
-    return (*root);
-}
-
-struct node *delete (struct node **root, char *key)
-{
-    if ((*root) == NULL)
-        return NULL;
-    if (strcmp(key, (*root)->key) > 0)
-        (*root)->right_child = delete (&(*root)->right_child, key);
-    else if (strcmp(key, (*root)->key) < 0)
-        (*root)->left_child = delete (&(*root)->left_child, key);
-    else
-    {
-        //No Children
-        if ((*root)->left_child == NULL && (*root)->right_child == NULL)
-        {
-            free((*root));
-            return NULL;
-        }
-
-        //One ChildgetNextMatchNode
-        else if ((*root)->left_child == NULL || (*root)->right_child == NULL)
-        {
-            struct node *temp;
-            if ((*root)->left_child == NULL)
-                temp = (*root)->right_child;
-            else
-                temp = (*root)->left_child;
-            free((*root));
-            return temp;
-        }
-
-        //Two Children
-        else
-        {
-            struct node *temp = find_minimum((*root)->right_child);
-            (*root)->key = temp->key;
-            (*root)->value = temp->value;
-            (*root)->right_child = delete (&(*root)->right_child, temp->key);
-        }
-    }
-    return (*root);
-}
-
-struct mapper_args
-{
-    Mapper map;
-    Combiner combine;
-    int num_maps;
-    char *file_name;
-    int index;
-};
-
-struct reducer_args
-{
-    Reducer reduce;
-    int partition_number;
-};
-
-struct node **mapper_table;
-struct node **reducer_table;
-
-pthread_mutex_t lock;
-pthread_t *all_mappers;
-pthread_t *all_reducers;
-int mapper_count;
-int num_files;
-int num_map_threads;
-char **all_files;
-
-Partitioner partitionGenerator;
-int num_partitions;
+    k_entry map[NUM_MAPS];
+    int key_num;
+    pthread_mutex_t lock;
+    k_node *sorted;
+    int curr_visit;
+} p_entry;
+p_entry hm[64];
+p_entry hm1[64];
 
 int getIndex(pthread_t thread_id)
 {
     for (int i = 0; i < mapper_count; i++)
     {
-        if (pthread_equal(thread_id, all_mappers[i]) != 0)
+        if (pthread_equal(thread_id, mapthreads[i]) != 0)
         {
             return i;
         }
@@ -159,176 +58,393 @@ int getIndex(pthread_t thread_id)
     return -1;
 }
 
+char *get_combine_func(char *key)
+{
+    int thread_index = getIndex(pthread_self());
+    k_node *arr = hm1[thread_index].sorted;
+    char *value;
+    while (1)
+    {
+        int curr = hm1[thread_index].curr_visit;
+        if (strcmp(arr[curr].key, key) == 0)
+        {
+            if (arr[curr].head == NULL)
+                return NULL;
+            v_node *temp = arr[curr].head->next;
+            value = arr[curr].head->value;
+            //free(arr[curr].head -> value);
+            //free(arr[curr].head);
+            arr[curr].head = temp;
+            return value;
+        }
+        else
+        {
+            //free(arr[curr].key);
+            // free(arr[curr]);
+            hm1[thread_index].curr_visit++;
+            continue;
+        }
+        return NULL;
+    }
+}
+
+char *get_func(char *key, int partition_number)
+{
+    k_node *arr = hm[partition_number].sorted;
+    char *value;
+    while (1)
+    {
+        int curr = hm[partition_number].curr_visit;
+        if (strcmp(arr[curr].key, key) == 0)
+        {
+            if (arr[curr].head == NULL)
+                return NULL;
+            v_node *temp = arr[curr].head->next;
+            value = arr[curr].head->value;
+            //free(arr[curr].head -> value);
+            //free(arr[curr].head);
+            arr[curr].head = temp;
+            return value;
+        }
+        else
+        {
+            //free(arr[curr].key);
+            // free(arr[curr]);
+            hm[partition_number].curr_visit++;
+            continue;
+        }
+        return NULL;
+    }
+}
+
+int compareStr(const void *a, const void *b)
+{
+    char *n1 = ((k_node *)a)->key;
+    char *n2 = ((k_node *)b)->key;
+    int rc = strcmp(n1, n2);
+    return rc;
+}
+
+void *Map_thread(void *arg)
+{
+    for (;;)
+    {
+        char *filename;
+        pthread_mutex_lock(&fileLock);
+        if (counter >= NUM_FILES)
+        {
+            pthread_mutex_unlock(&fileLock);
+            return NULL;
+        }
+        filename = file_names[counter++];
+        map_func(filename);
+
+        if (combine_func != NULL)
+        {
+            int thread_index = getIndex(pthread_self());
+
+            if (hm1[thread_index].key_num == 0)
+            {
+                return NULL;
+            }
+            hm1[thread_index].sorted = malloc(sizeof(k_node) * hm1[thread_index].key_num);
+            int count = 0;
+            for (int i = 0; i < NUM_MAPS; i++)
+            {
+                k_node *curr = hm1[thread_index].map[i].head;
+                if (curr == NULL)
+                    continue;
+                while (curr != NULL)
+                {
+                    hm1[thread_index].sorted[count] = *curr;
+                    count++;
+                    curr = curr->next;
+                }
+            }
+
+            qsort(hm1[thread_index].sorted, hm1[thread_index].key_num, sizeof(k_node), compareStr);
+
+            
+            for (int i = 0; i < hm1[thread_index].key_num; i++)
+            {
+                char *key = hm1[thread_index].sorted[i].key;
+                combine_func(key, get_combine_func);
+            }
+        }
+
+        pthread_mutex_unlock(&fileLock);
+    }
+}
+
+void *Reduce_thread(void *arg1)
+{
+    int partition_number = *(int *)arg1;
+    free(arg1);
+    arg1 = NULL;
+    if (hm[partition_number].key_num == 0)
+    {
+        return NULL;
+    }
+    hm[partition_number].sorted = malloc(sizeof(k_node) * hm[partition_number].key_num);
+    int count = 0;
+    for (int i = 0; i < NUM_MAPS; i++)
+    {
+        k_node *curr = hm[partition_number].map[i].head;
+        if (curr == NULL)
+            continue;
+        while (curr != NULL)
+        {
+            hm[partition_number].sorted[count] = *curr;
+            count++;
+            curr = curr->next;
+        }
+    }
+
+    qsort(hm[partition_number].sorted, hm[partition_number].key_num, sizeof(k_node), compareStr);
+
+    for (int i = 0; i < count; i++)
+    {
+        //printf("%s", hm[partition_number].sorted[i]->key);
+    }
+    for (int i = 0; i < hm[partition_number].key_num; i++)
+    {
+        char *key = hm[partition_number].sorted[i].key;
+        reduce_func(key, NULL, get_func, partition_number);
+    }
+
+    //TODO free the data on heap
+    //TODO free all the nodes
+    for (int i = 0; i < NUM_MAPS; i++)
+    {
+        k_node *curr = hm[partition_number].map[i].head;
+        if (curr == NULL)
+            continue;
+        while (curr != NULL)
+        {
+            free(curr->key);
+            curr->key = NULL;
+            v_node *vcurr = curr->head;
+            while (vcurr != NULL)
+            {
+                free(vcurr->value);
+                vcurr->value = NULL;
+                v_node *temp = vcurr->next;
+                free(vcurr);
+                vcurr = temp;
+            }
+            vcurr = NULL;
+            k_node *tempK = curr->next;
+            free(curr);
+            curr = tempK;
+        }
+        curr = NULL;
+    }
+    free(hm[partition_number].sorted);
+    hm[partition_number].sorted = NULL;
+
+    return NULL;
+}
+
 void MR_EmitToCombiner(char *key, char *value)
 {
-    char *new_key = strdup(key);
-    char *new_val = strdup(value);
-
     int thread_index = getIndex(pthread_self());
-    mapper_table[thread_index] = insert(&mapper_table[thread_index], new_key, new_val);
+    unsigned long map_number = MR_DefaultHashPartition(key, NUM_MAPS);
+    pthread_mutex_lock(&hm1[thread_index].map[map_number].lock);
+    k_node *temp = hm1[thread_index].map[map_number].head;
+    while (temp != NULL)
+    {
+        if (strcmp(temp->key, key) == 0)
+        {
+            break;
+        }
+        temp = temp->next;
+    }
+    //create a value node
+
+    v_node *new_v = malloc(sizeof(v_node));
+    if (new_v == NULL)
+    {
+        perror("malloc");
+        pthread_mutex_unlock(&hm1[thread_index].map[map_number].lock);
+        return; // fail
+    }
+    new_v->value = malloc(sizeof(char) * 20);
+    if (new_v->value == NULL)
+        printf("ERROR MALLOC FOR VALUE");
+    strcpy(new_v->value, value);
+    new_v->next = NULL;
+    //if there is no existing node for same key
+    if (temp == NULL)
+    {
+        k_node *new_key = malloc(sizeof(k_node));
+        if (new_key == NULL)
+        {
+            perror("malloc");
+            pthread_mutex_unlock(&hm1[thread_index].map[map_number].lock);
+            return; // fail
+        }
+        new_key->head = new_v;
+        new_key->next = hm1[thread_index].map[map_number].head;
+        hm1[thread_index].map[map_number].head = new_key;
+
+        new_key->key = malloc(sizeof(char) * 20);
+        if (new_key->key == NULL)
+            printf("ERROR MALLOC FOR VALUE");
+        strcpy(new_key->key, key);
+        pthread_mutex_lock(&hm1[thread_index].lock);
+        hm1[thread_index].key_num++;
+        pthread_mutex_unlock(&hm1[thread_index].lock);
+    }
+    else
+    {
+        //if there is existing node for same key
+        new_v->next = temp->head;
+        temp->head = new_v;
+    }
+
+    pthread_mutex_unlock(&hm1[thread_index].map[map_number].lock);
 }
 
 void MR_EmitToReducer(char *key, char *value)
 {
-    char *new_key = strdup(key);
-    char *new_val = strdup(value);
 
-    reducer_table[partitionGenerator(new_key, num_partitions)] = insert(&reducer_table[partitionGenerator(new_key, num_partitions)], new_key, new_val);
-}
-
-char *combine_get_next(char *key)
-{
-    int thread_index = getIndex(pthread_self());
-
-    char *return_val = search(mapper_table[thread_index], key);
-
-    if (return_val == NULL)
+    unsigned long partition_number = partition_func(key, reducer_count);
+    unsigned long map_number = MR_DefaultHashPartition(key, NUM_MAPS);
+    pthread_mutex_lock(&hm[partition_number].map[map_number].lock);
+    k_node *temp = hm[partition_number].map[map_number].head;
+    while (temp != NULL)
     {
-        return NULL;
+        if (strcmp(temp->key, key) == 0)
+        {
+            break;
+        }
+        temp = temp->next;
+    }
+    //create a value node
+
+    v_node *new_v = malloc(sizeof(v_node));
+    if (new_v == NULL)
+    {
+        perror("malloc");
+        pthread_mutex_unlock(&hm[partition_number].map[map_number].lock);
+        return; // fail
+    }
+    new_v->value = malloc(sizeof(char) * 20);
+    if (new_v->value == NULL)
+        printf("ERROR MALLOC FOR VALUE");
+    strcpy(new_v->value, value);
+    new_v->next = NULL;
+    //if there is no existing node for same key
+    if (temp == NULL)
+    {
+        k_node *new_key = malloc(sizeof(k_node));
+        if (new_key == NULL)
+        {
+            perror("malloc");
+            pthread_mutex_unlock(&hm[partition_number].map[map_number].lock);
+            return; // fail
+        }
+        new_key->head = new_v;
+        new_key->next = hm[partition_number].map[map_number].head;
+        hm[partition_number].map[map_number].head = new_key;
+
+        new_key->key = malloc(sizeof(char) * 20);
+        if (new_key->key == NULL)
+            printf("ERROR MALLOC FOR VALUE");
+        strcpy(new_key->key, key);
+        pthread_mutex_lock(&hm[partition_number].lock);
+        hm[partition_number].key_num++;
+        pthread_mutex_unlock(&hm[partition_number].lock);
     }
     else
     {
-        mapper_table[thread_index] = delete (&mapper_table[thread_index], key);
+        //if there is existing node for same key
+        new_v->next = temp->head;
+        temp->head = new_v;
     }
 
-    return return_val;
+    pthread_mutex_unlock(&hm[partition_number].map[map_number].lock);
 }
-
-char *reduce_get_next(char *key, int partition_number)
-{
-    char *return_val = search(reducer_table[partition_number], key);
-
-    if (return_val == NULL)
-    {
-        return NULL;
-    }
-    else
-    {
-        reducer_table[partition_number] = delete (&reducer_table[partition_number], key);
-    }
-    return return_val;
-}
-
 unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
 {
     unsigned long hash = 5381;
     int c;
     while ((c = *key++) != '\0')
         hash = hash * 33 + c;
-
     return hash % num_partitions;
 }
-
-void *mapper_runner(void *map_args)
-{
-    pthread_mutex_lock(&lock);
-    struct mapper_args *temp_args = (struct mapper_args *)map_args;
-    int curr_file_index = (*temp_args).index;
-    (*temp_args).map((*temp_args).file_name);
-
-    while ((curr_file_index + num_map_threads) < num_files)
-    {
-        curr_file_index = curr_file_index + num_map_threads;
-        (*temp_args).map(all_files[curr_file_index]);
-    }
-
-    if ((*temp_args).combine != NULL)
-    {
-        while (mapper_table[(*temp_args).index] != NULL)
-        {
-            (*temp_args).combine(mapper_table[(*temp_args).index]->key, combine_get_next);
-        }
-    }
-
-    pthread_mutex_unlock(&lock);
-
-    return NULL;
-}
-
-void *reducer_runner(void *red_args)
-{
-    pthread_mutex_lock(&lock);
-    struct reducer_args *temp_args = (struct reducer_args *)red_args;
-    while (reducer_table[(*temp_args).partition_number] != NULL)
-    {
-        (*temp_args).reduce(reducer_table[(*temp_args).partition_number]->key, NULL, reduce_get_next, (*temp_args).partition_number);
-    }
-    pthread_mutex_unlock(&lock);
-    return NULL;
-}
-
 void MR_Run(int argc, char *argv[],
             Mapper map, int num_mappers,
             Reducer reduce, int num_reducers,
             Combiner combine,
             Partitioner partition)
 {
-    mapper_table = malloc(sizeof(struct node *) * num_mappers);
-    reducer_table = malloc(sizeof(struct node *) * num_reducers);
 
+    int rc = pthread_mutex_init(&fileLock, NULL);
+    assert(rc == 0);
+    counter = 0;
+    mapper_count = num_mappers;
+    reducer_count = num_reducers;
+
+    NUM_FILES = argc - 1;
+    file_names = (argv + 1);
+    map_func = map;
+    reduce_func = reduce;
+    combine_func = combine;
+    partition_func = partition;
+
+    //hash initialization
     for (int i = 0; i < num_mappers; i++)
     {
-        mapper_table[i] = NULL;
+        pthread_mutex_init(&hm1[i].lock, NULL);
+        hm1[i].key_num = 0;
+        hm1[i].curr_visit = 0;
+        hm1[i].sorted = NULL;
+        for (int j = 0; j < NUM_MAPS; j++)
+        {
+            hm1[i].map[j].head = NULL;
+            pthread_mutex_init(&hm1[i].map[j].lock, NULL);
+        }
     }
 
+    //hash initialization
     for (int i = 0; i < num_reducers; i++)
     {
-        reducer_table[i] = NULL;
+        pthread_mutex_init(&hm[i].lock, NULL);
+        hm[i].key_num = 0;
+        hm[i].curr_visit = 0;
+        hm[i].sorted = NULL;
+        for (int j = 0; j < NUM_MAPS; j++)
+        {
+            hm[i].map[j].head = NULL;
+            pthread_mutex_init(&hm[i].map[j].lock, NULL);
+        }
     }
 
-    all_mappers = malloc(num_mappers * sizeof(pthread_t *));
-    mapper_count = num_mappers;
-
-    num_files = argc - 1;
-
-    struct mapper_args *map_args;
-
-    num_map_threads = (num_mappers <= num_files) ? (num_mappers) : (num_files);
-
-    all_files = malloc((argc - 1) * sizeof(char *));
-
-    partitionGenerator = partition;
-    num_partitions = num_reducers;
-
-    for (int i = 0; i < argc - 1; i++)
+    // create map threads
+    mapthreads = malloc(num_mappers * sizeof(pthread_t *));
+    for (int i = 0; i < num_mappers; i++)
     {
-        all_files[i] = argv[i + 1];
+        pthread_create(&mapthreads[i], NULL, Map_thread, NULL);
     }
 
-    for (int i = 0; i < num_map_threads; i++)
+    // join waits for the threads to finish
+    for (int k = 0; k < num_mappers; k++)
     {
-        map_args = malloc(sizeof(struct mapper_args));
-
-        (*map_args).combine = combine;
-        (*map_args).map = map;
-        (*map_args).file_name = argv[i + 1];
-        (*map_args).num_maps = num_mappers;
-        (*map_args).index = i;
-
-        pthread_create(&all_mappers[i], NULL, mapper_runner, (void *)map_args);
+        pthread_join(mapthreads[k], NULL);
     }
 
-    for (int i = 0; i < num_map_threads; i++)
+    // create reduce threads
+    pthread_t reducethreads[num_reducers];
+    for (int j = 0; j < num_reducers; j++)
     {
-        pthread_join(all_mappers[i], NULL);
+        void *arg = malloc(4);
+        *(int *)arg = j;
+        pthread_create(&reducethreads[j], NULL, Reduce_thread, arg);
     }
 
-    all_reducers = malloc(num_reducers * sizeof(pthread_t *));
-
-    struct reducer_args *red_args;
-
-    for (int i = 0; i < num_reducers; i++)
+    for (int m = 0; m < num_reducers; m++)
     {
-        red_args = malloc(sizeof(struct reducer_args));
-
-        (*red_args).reduce = reduce;
-        (*red_args).partition_number = i;
-
-        pthread_create(&all_reducers[i], NULL, reducer_runner, (void *)red_args);
-    }
-
-    for (int i = 0; i < num_reducers; i++)
-    {
-        pthread_join(all_reducers[i], NULL);
+        pthread_join(reducethreads[m], NULL);
     }
 }
