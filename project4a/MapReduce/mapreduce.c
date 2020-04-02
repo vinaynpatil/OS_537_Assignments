@@ -174,6 +174,7 @@ void *mapper_wrapper(void *arg)
                 combine_func(key, get_combine_func);
             }
 
+            mapper_table[thread_index].curr_visit = 0;
             free(mapper_table[thread_index].sorted);
         }
 
@@ -208,43 +209,13 @@ void *reducer_wrapper(void *arg1)
 
     qsort(reducer_table[partition_number].sorted, reducer_table[partition_number].key_num, sizeof(k_node), compareStr);
 
-    for (int i = 0; i < count; i++)
-    {
-        //printf("%s", reducer_table[partition_number].sorted[i]->key);
-    }
     for (int i = 0; i < reducer_table[partition_number].key_num; i++)
     {
         char *key = reducer_table[partition_number].sorted[i].key;
         reduce_func(key, NULL, get_func, partition_number);
     }
 
-    //TODO free the data on heap
-    //TODO free all the nodes
-    for (int i = 0; i < table_buckets; i++)
-    {
-        k_node *curr = reducer_table[partition_number].map[i].head;
-        if (curr == NULL)
-            continue;
-        while (curr != NULL)
-        {
-            free(curr->key);
-            curr->key = NULL;
-            v_node *vcurr = curr->head;
-            while (vcurr != NULL)
-            {
-                free(vcurr->value);
-                vcurr->value = NULL;
-                v_node *temp = vcurr->next;
-                free(vcurr);
-                vcurr = temp;
-            }
-            vcurr = NULL;
-            k_node *tempK = curr->next;
-            free(curr);
-            curr = tempK;
-        }
-        curr = NULL;
-    }
+    
     free(reducer_table[partition_number].sorted);
 
     //pthread_mutex_unlock(&locker);
@@ -318,10 +289,9 @@ void MR_EmitToReducer(char *key, char *value)
 
         new_key->head = new_v;
         new_key->next = reducer_table[partition_number].map[map_number].head;
-        reducer_table[partition_number].map[map_number].head = new_key;
-
         new_key->key = strdup(key);
 
+        reducer_table[partition_number].map[map_number].head = new_key;
         reducer_table[partition_number].key_num++;
     }
     else
@@ -396,6 +366,35 @@ void MR_Run(int argc, char *argv[],
         pthread_join(all_mappers[k], NULL);
     }
 
+    for (int k = 0; k < num_mappers; k++)
+    {
+        for (int i = 0; i < table_buckets; i++)
+        {
+            k_node *curr = mapper_table[k].map[i].head;
+            if (curr == NULL)
+                continue;
+            while (curr != NULL)
+            {
+                free(curr->key);
+                curr->key = NULL;
+                v_node *vcurr = curr->head;
+                while (vcurr != NULL)
+                {
+                    free(vcurr->value);
+                    vcurr->value = NULL;
+                    v_node *temp = vcurr->next;
+                    free(vcurr);
+                    vcurr = temp;
+                }
+                vcurr = NULL;
+                k_node *tempK = curr->next;
+                free(curr);
+                curr = tempK;
+            }
+            curr = NULL;
+        }
+    }
+
     for (int j = 0; j < num_reducers; j++)
     {
         void *arg = malloc(4);
@@ -408,8 +407,35 @@ void MR_Run(int argc, char *argv[],
         pthread_join(all_reducers[m], NULL);
     }
 
+    for (int k = 0; k < num_reducers; k++)
+    {
+        for (int i = 0; i < table_buckets; i++)
+        {
+            k_node *curr = reducer_table[k].map[i].head;
+            if (curr == NULL)
+                continue;
+            while (curr != NULL)
+            {
+                free(curr->key);
+                curr->key = NULL;
+                v_node *vcurr = curr->head;
+                while (vcurr != NULL)
+                {
+                    free(vcurr->value);
+                    vcurr->value = NULL;
+                    v_node *temp = vcurr->next;
+                    free(vcurr);
+                    vcurr = temp;
+                }
+                vcurr = NULL;
+                k_node *tempK = curr->next;
+                free(curr);
+                curr = tempK;
+            }
+            curr = NULL;
+        }
+    }
+
     free(all_mappers);
     free(all_reducers);
-
-    
 }
