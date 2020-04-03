@@ -64,6 +64,7 @@ int getIndex(pthread_t thread_id)
 
 char *get_combine_func(char *key)
 {
+
     int thread_index = getIndex(pthread_self());
     k_node *arr = mapper_table[thread_index].sorted;
     char *value;
@@ -74,17 +75,14 @@ char *get_combine_func(char *key)
         {
             if (arr[curr].head == NULL)
                 return NULL;
+
             v_node *temp = arr[curr].head->next;
             value = arr[curr].head->value;
-            //free(arr[curr].head -> value);
-            //free(arr[curr].head);
             arr[curr].head = temp;
             return value;
         }
         else
         {
-            //free(arr[curr].key);
-            // free(arr[curr]);
             mapper_table[thread_index].curr_visit++;
             continue;
         }
@@ -105,15 +103,11 @@ char *get_func(char *key, int partition_number)
                 return NULL;
             v_node *temp = arr[curr].head->next;
             value = arr[curr].head->value;
-            //free(arr[curr].head -> value);
-            //free(arr[curr].head);
             arr[curr].head = temp;
             return value;
         }
         else
         {
-            //free(arr[curr].key);
-            // free(arr[curr]);
             reducer_table[partition_number].curr_visit++;
             continue;
         }
@@ -131,60 +125,58 @@ int compareStr(const void *a, const void *b)
 
 void *mapper_wrapper(void *arg)
 {
-    for (;;)
+    pthread_mutex_lock(&locker);
+    int curr_file_index = getIndex(pthread_self());
+    map_func(file_names[curr_file_index]);
+
+    while ((curr_file_index + mapper_count) < NUM_FILES)
     {
-        char *filename;
-        pthread_mutex_lock(&locker);
-        if (file_index >= NUM_FILES)
+        curr_file_index = curr_file_index + mapper_count;
+        map_func(file_names[curr_file_index]);
+    }
+
+
+    if (combine_func != NULL)
+    {
+        int thread_index = getIndex(pthread_self());
+
+        if (mapper_table[thread_index].key_num == 0)
         {
-            pthread_mutex_unlock(&locker);
             return NULL;
         }
-        filename = file_names[file_index++];
-        map_func(filename);
-
-        if (combine_func != NULL)
+        mapper_table[thread_index].sorted = malloc(sizeof(k_node) * mapper_table[thread_index].key_num);
+        int count = 0;
+        for (int i = 0; i < table_buckets; i++)
         {
-            int thread_index = getIndex(pthread_self());
-
-            if (mapper_table[thread_index].key_num == 0)
+            k_node *curr = mapper_table[thread_index].map[i].head;
+            if (curr == NULL)
+                continue;
+            while (curr != NULL)
             {
-                return NULL;
+                mapper_table[thread_index].sorted[count] = *curr;
+                count++;
+                curr = curr->next;
             }
-            mapper_table[thread_index].sorted = malloc(sizeof(k_node) * mapper_table[thread_index].key_num);
-            int count = 0;
-            for (int i = 0; i < table_buckets; i++)
-            {
-                k_node *curr = mapper_table[thread_index].map[i].head;
-                if (curr == NULL)
-                    continue;
-                while (curr != NULL)
-                {
-                    mapper_table[thread_index].sorted[count] = *curr;
-                    count++;
-                    curr = curr->next;
-                }
-            }
-
-            qsort(mapper_table[thread_index].sorted, mapper_table[thread_index].key_num, sizeof(k_node), compareStr);
-
-            for (int i = 0; i < mapper_table[thread_index].key_num; i++)
-            {
-                char *key = mapper_table[thread_index].sorted[i].key;
-                combine_func(key, get_combine_func);
-            }
-
-            mapper_table[thread_index].curr_visit = 0;
-            free(mapper_table[thread_index].sorted);
         }
 
-        pthread_mutex_unlock(&locker);
+        qsort(mapper_table[thread_index].sorted, mapper_table[thread_index].key_num, sizeof(k_node), compareStr);
+
+        for (int i = 0; i < mapper_table[thread_index].key_num; i++)
+        {
+            char *key = mapper_table[thread_index].sorted[i].key;
+            combine_func(key, get_combine_func);
+        }
+
+        mapper_table[thread_index].curr_visit = 0;
+        free(mapper_table[thread_index].sorted);
     }
+
+    pthread_mutex_unlock(&locker);
+    return NULL;
 }
 
 void *reducer_wrapper(void *arg1)
 {
-    //pthread_mutex_lock(&locker);
     int partition_number = *(int *)arg1;
     free(arg1);
     arg1 = NULL;
@@ -215,10 +207,7 @@ void *reducer_wrapper(void *arg1)
         reduce_func(key, NULL, get_func, partition_number);
     }
 
-    
     free(reducer_table[partition_number].sorted);
-
-    //pthread_mutex_unlock(&locker);
 
     return NULL;
 }
@@ -236,13 +225,10 @@ void MR_EmitToCombiner(char *key, char *value)
         }
         temp = temp->next;
     }
-    //create a value node
-
     v_node *new_v = malloc(sizeof(v_node));
 
     new_v->value = strdup(value);
     new_v->next = NULL;
-    //if there is no existing node for same key
     if (temp == NULL)
     {
         k_node *new_key = malloc(sizeof(k_node));
@@ -256,7 +242,6 @@ void MR_EmitToCombiner(char *key, char *value)
     }
     else
     {
-        //if there is existing node for same key
         new_v->next = temp->head;
         temp->head = new_v;
     }
@@ -264,7 +249,6 @@ void MR_EmitToCombiner(char *key, char *value)
 
 void MR_EmitToReducer(char *key, char *value)
 {
-
     unsigned long partition_number = partition_func(key, reducer_count);
     unsigned long map_number = MR_DefaultHashPartition(key, table_buckets);
     k_node *temp = reducer_table[partition_number].map[map_number].head;
@@ -276,13 +260,11 @@ void MR_EmitToReducer(char *key, char *value)
         }
         temp = temp->next;
     }
-    //create a value node
 
     v_node *new_v = malloc(sizeof(v_node));
 
     new_v->value = strdup(value);
     new_v->next = NULL;
-    //if there is no existing node for same key
     if (temp == NULL)
     {
         k_node *new_key = malloc(sizeof(k_node));
@@ -296,7 +278,6 @@ void MR_EmitToReducer(char *key, char *value)
     }
     else
     {
-        //if there is existing node for same key
         new_v->next = temp->head;
         temp->head = new_v;
     }
@@ -318,18 +299,19 @@ void MR_Run(int argc, char *argv[],
 
     pthread_mutex_init(&locker, NULL);
     file_index = 0;
-    mapper_count = num_mappers;
+    NUM_FILES = argc - 1;
+
+    mapper_count = (num_mappers <= NUM_FILES) ? (num_mappers) : (NUM_FILES);
+    ;
     reducer_count = num_reducers;
 
-    NUM_FILES = argc - 1;
     file_names = (argv + 1);
     map_func = map;
     reduce_func = reduce;
     combine_func = combine;
     partition_func = partition;
 
-    //hash initialization
-    for (int i = 0; i < num_mappers; i++)
+    for (int i = 0; i < mapper_count; i++)
     {
         mapper_table[i].key_num = 0;
         mapper_table[i].curr_visit = 0;
@@ -340,7 +322,6 @@ void MR_Run(int argc, char *argv[],
         }
     }
 
-    //hash initialization
     for (int i = 0; i < num_reducers; i++)
     {
         reducer_table[i].key_num = 0;
@@ -352,21 +333,20 @@ void MR_Run(int argc, char *argv[],
         }
     }
 
-    all_mappers = malloc(num_mappers * sizeof(pthread_t *));
+    all_mappers = malloc(mapper_count * sizeof(pthread_t *));
     all_reducers = malloc(num_reducers * sizeof(pthread_t *));
 
-    for (int i = 0; i < num_mappers; i++)
+    for (int i = 0; i < mapper_count; i++)
     {
         pthread_create(&all_mappers[i], NULL, mapper_wrapper, NULL);
     }
 
-    // join waits for the threads to finish
-    for (int k = 0; k < num_mappers; k++)
+    for (int k = 0; k < mapper_count; k++)
     {
         pthread_join(all_mappers[k], NULL);
     }
 
-    for (int k = 0; k < num_mappers; k++)
+    for (int k = 0; k < mapper_count; k++)
     {
         for (int i = 0; i < table_buckets; i++)
         {
