@@ -6,49 +6,19 @@
 #include <semaphore.h>
 #include "mapreduce.h"
 
-int mapper_count;
-int reducer_count;
-int NUM_FILES;
-char **file_names;
-int file_index;
-const int table_buckets = 100000;
-
-pthread_t *all_mappers;
-pthread_t *all_reducers;
-
-pthread_mutex_t locker;
-
 Partitioner partition_func;
 Mapper map_func;
 Reducer reduce_func;
 Combiner combine_func;
 
-typedef struct __v_node
-{
-    char *value;
-    struct __v_node *next;
-} v_node;
-typedef struct __k_node
-{
-    char *key;
-    v_node *head;
-    struct __k_node *next;
-} k_node;
-typedef struct __k_entry
-{
-    k_node *head;
-} k_entry;
+pthread_t *all_mappers;
+pthread_t *all_reducers;
+pthread_mutex_t mapper_lock;
 
-struct table
-{
-    k_entry map[100000];
-    int key_num;
-    k_node *sorted;
-    int curr_visit;
-};
+int mapper_count;
+int reducer_count;
 
-struct table reducer_table[64];
-struct table mapper_table[64];
+typedef char *string;
 
 int getIndex(pthread_t thread_id)
 {
@@ -62,226 +32,12 @@ int getIndex(pthread_t thread_id)
     return -1;
 }
 
-char *get_combine_func(char *key)
+typedef struct chained_value
 {
+    struct chained_value *next;
+    string linked_value;
+} chained_value;
 
-    int thread_index = getIndex(pthread_self());
-    k_node *arr = mapper_table[thread_index].sorted;
-    char *value;
-    while (1)
-    {
-        int curr = mapper_table[thread_index].curr_visit;
-        if (strcmp(arr[curr].key, key) == 0)
-        {
-            if (arr[curr].head == NULL)
-                return NULL;
-
-            v_node *temp = arr[curr].head->next;
-            value = arr[curr].head->value;
-            arr[curr].head = temp;
-            return value;
-        }
-        else
-        {
-            mapper_table[thread_index].curr_visit++;
-            continue;
-        }
-        return NULL;
-    }
-}
-
-char *get_func(char *key, int partition_number)
-{
-    k_node *arr = reducer_table[partition_number].sorted;
-    char *value;
-    while (1)
-    {
-        int curr = reducer_table[partition_number].curr_visit;
-        if (strcmp(arr[curr].key, key) == 0)
-        {
-            if (arr[curr].head == NULL)
-                return NULL;
-            v_node *temp = arr[curr].head->next;
-            value = arr[curr].head->value;
-            arr[curr].head = temp;
-            return value;
-        }
-        else
-        {
-            reducer_table[partition_number].curr_visit++;
-            continue;
-        }
-        return NULL;
-    }
-}
-
-int compareStr(const void *a, const void *b)
-{
-    char *n1 = ((k_node *)a)->key;
-    char *n2 = ((k_node *)b)->key;
-    int rc = strcmp(n1, n2);
-    return rc;
-}
-
-void *mapper_wrapper(void *arg)
-{
-    pthread_mutex_lock(&locker);
-    int curr_file_index = getIndex(pthread_self());
-    map_func(file_names[curr_file_index]);
-
-    while ((curr_file_index + mapper_count) < NUM_FILES)
-    {
-        curr_file_index = curr_file_index + mapper_count;
-        map_func(file_names[curr_file_index]);
-    }
-
-
-    if (combine_func != NULL)
-    {
-        int thread_index = getIndex(pthread_self());
-
-        if (mapper_table[thread_index].key_num == 0)
-        {
-            return NULL;
-        }
-        mapper_table[thread_index].sorted = malloc(sizeof(k_node) * mapper_table[thread_index].key_num);
-        int count = 0;
-        for (int i = 0; i < table_buckets; i++)
-        {
-            k_node *curr = mapper_table[thread_index].map[i].head;
-            if (curr == NULL)
-                continue;
-            while (curr != NULL)
-            {
-                mapper_table[thread_index].sorted[count] = *curr;
-                count++;
-                curr = curr->next;
-            }
-        }
-
-        qsort(mapper_table[thread_index].sorted, mapper_table[thread_index].key_num, sizeof(k_node), compareStr);
-
-        for (int i = 0; i < mapper_table[thread_index].key_num; i++)
-        {
-            char *key = mapper_table[thread_index].sorted[i].key;
-            combine_func(key, get_combine_func);
-        }
-
-        mapper_table[thread_index].curr_visit = 0;
-        free(mapper_table[thread_index].sorted);
-    }
-
-    pthread_mutex_unlock(&locker);
-    return NULL;
-}
-
-void *reducer_wrapper(void *arg1)
-{
-    int partition_number = *(int *)arg1;
-    free(arg1);
-    arg1 = NULL;
-    if (reducer_table[partition_number].key_num == 0)
-    {
-        return NULL;
-    }
-    reducer_table[partition_number].sorted = malloc(sizeof(k_node) * reducer_table[partition_number].key_num);
-    int count = 0;
-    for (int i = 0; i < table_buckets; i++)
-    {
-        k_node *curr = reducer_table[partition_number].map[i].head;
-        if (curr == NULL)
-            continue;
-        while (curr != NULL)
-        {
-            reducer_table[partition_number].sorted[count] = *curr;
-            count++;
-            curr = curr->next;
-        }
-    }
-
-    qsort(reducer_table[partition_number].sorted, reducer_table[partition_number].key_num, sizeof(k_node), compareStr);
-
-    for (int i = 0; i < reducer_table[partition_number].key_num; i++)
-    {
-        char *key = reducer_table[partition_number].sorted[i].key;
-        reduce_func(key, NULL, get_func, partition_number);
-    }
-
-    free(reducer_table[partition_number].sorted);
-
-    return NULL;
-}
-
-void MR_EmitToCombiner(char *key, char *value)
-{
-    int thread_index = getIndex(pthread_self());
-    unsigned long map_number = MR_DefaultHashPartition(key, table_buckets);
-    k_node *temp = mapper_table[thread_index].map[map_number].head;
-    while (temp != NULL)
-    {
-        if (strcmp(temp->key, key) == 0)
-        {
-            break;
-        }
-        temp = temp->next;
-    }
-    v_node *new_v = malloc(sizeof(v_node));
-
-    new_v->value = strdup(value);
-    new_v->next = NULL;
-    if (temp == NULL)
-    {
-        k_node *new_key = malloc(sizeof(k_node));
-
-        new_key->head = new_v;
-        new_key->next = mapper_table[thread_index].map[map_number].head;
-        new_key->key = strdup(key);
-
-        mapper_table[thread_index].map[map_number].head = new_key;
-        mapper_table[thread_index].key_num++;
-    }
-    else
-    {
-        new_v->next = temp->head;
-        temp->head = new_v;
-    }
-}
-
-void MR_EmitToReducer(char *key, char *value)
-{
-    unsigned long partition_number = partition_func(key, reducer_count);
-    unsigned long map_number = MR_DefaultHashPartition(key, table_buckets);
-    k_node *temp = reducer_table[partition_number].map[map_number].head;
-    while (temp != NULL)
-    {
-        if (strcmp(temp->key, key) == 0)
-        {
-            break;
-        }
-        temp = temp->next;
-    }
-
-    v_node *new_v = malloc(sizeof(v_node));
-
-    new_v->value = strdup(value);
-    new_v->next = NULL;
-    if (temp == NULL)
-    {
-        k_node *new_key = malloc(sizeof(k_node));
-
-        new_key->head = new_v;
-        new_key->next = reducer_table[partition_number].map[map_number].head;
-        new_key->key = strdup(key);
-
-        reducer_table[partition_number].map[map_number].head = new_key;
-        reducer_table[partition_number].key_num++;
-    }
-    else
-    {
-        new_v->next = temp->head;
-        temp->head = new_v;
-    }
-}
 unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
 {
     unsigned long hash = 5381;
@@ -290,6 +46,258 @@ unsigned long MR_DefaultHashPartition(char *key, int num_partitions)
         hash = hash * 33 + c;
     return hash % num_partitions;
 }
+
+typedef struct bucket_chained_kv
+{
+    struct bucket_chained_kv *next;
+    chained_value *value_container;
+    string unique_key;
+} bucket_chained_kv;
+
+typedef struct bucket
+{
+    bucket_chained_kv *inner_heap;
+} bucket;
+
+int comparator(const void *first, const void *second)
+{
+    return strcmp(((bucket_chained_kv *)first)->unique_key, ((bucket_chained_kv *)second)->unique_key);
+}
+
+typedef struct kvtable
+{
+    bucket_chained_kv *all_keys;
+    struct bucket bucket_array[10000];
+    int unique_key_count;
+    int tracker;
+} kvtable;
+
+int total_files;
+kvtable mapper_table[100];
+char **all_files;
+kvtable reducer_table[100];
+const int table_buckets = 10000;
+
+void MR_EmitToCombiner(char *key, char *value)
+{
+    int thread_index = getIndex(pthread_self());
+    unsigned long bucket_index = MR_DefaultHashPartition(key, table_buckets);
+    bucket_chained_kv *heap = mapper_table[thread_index].bucket_array[bucket_index].inner_heap;
+
+    while (heap != NULL)
+    {
+        if (strcmp(key, heap->unique_key) != 0)
+        {
+            heap = heap->next;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    chained_value *duplicate_value_node = malloc(sizeof(chained_value));
+    duplicate_value_node->next = NULL;
+    duplicate_value_node->linked_value = strdup(value);
+
+    if (heap != NULL)
+    {
+        duplicate_value_node->next = heap->value_container;
+        heap->value_container = duplicate_value_node;
+    }
+    else
+    {
+        mapper_table[thread_index].unique_key_count++;
+        bucket_chained_kv *duplicate_key_node = malloc(sizeof(bucket_chained_kv));
+        duplicate_key_node->next = mapper_table[thread_index].bucket_array[bucket_index].inner_heap;
+        duplicate_key_node->unique_key = strdup(key);
+        duplicate_key_node->value_container = duplicate_value_node;
+        mapper_table[thread_index].bucket_array[bucket_index].inner_heap = duplicate_key_node;
+    }
+}
+
+void MR_EmitToReducer(char *key, char *value)
+{
+    unsigned long reducer_bin = partition_func(key, reducer_count);
+    unsigned long bucket_index = MR_DefaultHashPartition(key, table_buckets);
+    bucket_chained_kv *heap = reducer_table[reducer_bin].bucket_array[bucket_index].inner_heap;
+
+    while (heap != NULL)
+    {
+        if (strcmp(key, heap->unique_key) != 0)
+        {
+            heap = heap->next;
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    chained_value *duplicate_value_node = malloc(sizeof(chained_value));
+    duplicate_value_node->linked_value = strdup(value);
+    duplicate_value_node->next = NULL;
+
+    if (heap != NULL)
+    {
+        duplicate_value_node->next = heap->value_container;
+        heap->value_container = duplicate_value_node;
+    }
+    else
+    {
+        reducer_table[reducer_bin].unique_key_count++;
+        bucket_chained_kv *duplicate_key_node = malloc(sizeof(bucket_chained_kv));
+        duplicate_key_node->next = reducer_table[reducer_bin].bucket_array[bucket_index].inner_heap;
+        duplicate_key_node->unique_key = strdup(key);
+        duplicate_key_node->value_container = duplicate_value_node;
+        reducer_table[reducer_bin].bucket_array[bucket_index].inner_heap = duplicate_key_node;
+    }
+}
+
+char *combine_get_next(char *key)
+{
+    int thread_index = getIndex(pthread_self());
+    bucket_chained_kv *each_key = mapper_table[thread_index].all_keys;
+    while (1)
+    {
+        int track_index = mapper_table[thread_index].tracker;
+        if (strcmp(key, each_key[track_index].unique_key) != 0)
+        {
+            mapper_table[thread_index].tracker++;
+            continue;
+        }
+        else
+        {
+            if (each_key[track_index].value_container == NULL)
+                return NULL;
+
+            string value = each_key[track_index].value_container->linked_value;
+            each_key[track_index].value_container = each_key[track_index].value_container->next;
+            return value;
+        }
+        return NULL;
+    }
+}
+
+char *reduce_get_next(char *key, int partition_number)
+{
+    bucket_chained_kv *each_key = reducer_table[partition_number].all_keys;
+    while (1)
+    {
+        int track_index = reducer_table[partition_number].tracker;
+        if (strcmp(key, each_key[track_index].unique_key) != 0)
+        {
+            reducer_table[partition_number].tracker++;
+            continue;
+        }
+        else
+        {
+            if (each_key[track_index].value_container == NULL)
+                return NULL;
+
+            string value = each_key[track_index].value_container->linked_value;
+            each_key[track_index].value_container = each_key[track_index].value_container->next;
+            return value;
+        }
+        return NULL;
+    }
+}
+
+void *mapper_runner(void *map_args)
+{
+    pthread_mutex_lock(&mapper_lock);
+    int curr_file_index = getIndex(pthread_self());
+    map_func(all_files[curr_file_index]);
+
+    while ((curr_file_index + mapper_count) < total_files)
+    {
+        curr_file_index = curr_file_index + mapper_count;
+        map_func(all_files[curr_file_index]);
+    }
+
+    if (combine_func != NULL)
+    {
+        int thread_index = getIndex(pthread_self());
+
+        if (mapper_table[thread_index].unique_key_count == 0)
+        {
+            return NULL;
+        }
+        int iter_index = 0;
+
+        mapper_table[thread_index].all_keys = malloc(sizeof(bucket_chained_kv) * mapper_table[thread_index].unique_key_count);
+
+        for (int i = 0; i < table_buckets; i++)
+        {
+            bucket_chained_kv *heap = mapper_table[thread_index].bucket_array[i].inner_heap;
+
+            if (heap == NULL)
+                continue;
+
+            while (heap != NULL)
+            {
+                mapper_table[thread_index].all_keys[iter_index] = *heap;
+                heap = heap->next;
+                iter_index++;
+            }
+        }
+
+        qsort(mapper_table[thread_index].all_keys, mapper_table[thread_index].unique_key_count, sizeof(bucket_chained_kv), comparator);
+
+        for (int i = 0; i < mapper_table[thread_index].unique_key_count; i++)
+        {
+            string first_key = mapper_table[thread_index].all_keys[i].unique_key;
+            combine_func(first_key, combine_get_next);
+        }
+
+        mapper_table[thread_index].tracker = 0;
+        free(mapper_table[thread_index].all_keys);
+    }
+
+    pthread_mutex_unlock(&mapper_lock);
+    return NULL;
+}
+
+void *reducer_runner(void *red_args)
+{
+    int partition_number = *(int *)red_args;
+
+    if (reducer_table[partition_number].unique_key_count == 0)
+    {
+        return NULL;
+    }
+    int iter_index = 0;
+
+    reducer_table[partition_number].all_keys = malloc(sizeof(bucket_chained_kv) * reducer_table[partition_number].unique_key_count);
+
+    for (int i = 0; i < table_buckets; i++)
+    {
+        bucket_chained_kv *heap = reducer_table[partition_number].bucket_array[i].inner_heap;
+
+        if (heap == NULL)
+            continue;
+        while (heap != NULL)
+        {
+            reducer_table[partition_number].all_keys[iter_index] = *heap;
+            iter_index++;
+            heap = heap->next;
+        }
+    }
+
+    qsort(reducer_table[partition_number].all_keys, reducer_table[partition_number].unique_key_count, sizeof(bucket_chained_kv), comparator);
+
+    for (int i = 0; i < reducer_table[partition_number].unique_key_count; i++)
+    {
+        string first_key = reducer_table[partition_number].all_keys[i].unique_key;
+        reduce_func(first_key, NULL, reduce_get_next, partition_number);
+    }
+
+    free(reducer_table[partition_number].all_keys);
+    free(red_args);
+
+    return NULL;
+}
+
 void MR_Run(int argc, char *argv[],
             Mapper map, int num_mappers,
             Reducer reduce, int num_reducers,
@@ -297,15 +305,13 @@ void MR_Run(int argc, char *argv[],
             Partitioner partition)
 {
 
-    pthread_mutex_init(&locker, NULL);
-    file_index = 0;
-    NUM_FILES = argc - 1;
+    pthread_mutex_init(&mapper_lock, NULL);
+    total_files = argc - 1;
 
-    mapper_count = (num_mappers <= NUM_FILES) ? (num_mappers) : (NUM_FILES);
-    ;
+    mapper_count = (num_mappers <= total_files) ? (num_mappers) : (total_files);
     reducer_count = num_reducers;
 
-    file_names = (argv + 1);
+    all_files = (argv + 1);
     map_func = map;
     reduce_func = reduce;
     combine_func = combine;
@@ -313,32 +319,39 @@ void MR_Run(int argc, char *argv[],
 
     for (int i = 0; i < mapper_count; i++)
     {
-        mapper_table[i].key_num = 0;
-        mapper_table[i].curr_visit = 0;
-        mapper_table[i].sorted = NULL;
+        mapper_table[i].tracker = 0;
+
         for (int j = 0; j < table_buckets; j++)
         {
-            mapper_table[i].map[j].head = NULL;
+            mapper_table[i].bucket_array[j].inner_heap = NULL;
         }
+
+        mapper_table[i].all_keys = NULL;
+
+        mapper_table[i].unique_key_count = 0;
     }
 
     for (int i = 0; i < num_reducers; i++)
     {
-        reducer_table[i].key_num = 0;
-        reducer_table[i].curr_visit = 0;
-        reducer_table[i].sorted = NULL;
+        reducer_table[i].tracker = 0;
+
         for (int j = 0; j < table_buckets; j++)
         {
-            reducer_table[i].map[j].head = NULL;
+            reducer_table[i].bucket_array[j].inner_heap = NULL;
         }
+
+        reducer_table[i].all_keys = NULL;
+
+        reducer_table[i].unique_key_count = 0;
     }
 
     all_mappers = malloc(mapper_count * sizeof(pthread_t *));
+
     all_reducers = malloc(num_reducers * sizeof(pthread_t *));
 
     for (int i = 0; i < mapper_count; i++)
     {
-        pthread_create(&all_mappers[i], NULL, mapper_wrapper, NULL);
+        pthread_create(&all_mappers[i], NULL, mapper_runner, NULL);
     }
 
     for (int k = 0; k < mapper_count; k++)
@@ -350,36 +363,42 @@ void MR_Run(int argc, char *argv[],
     {
         for (int i = 0; i < table_buckets; i++)
         {
-            k_node *curr = mapper_table[k].map[i].head;
-            if (curr == NULL)
+            bucket_chained_kv *heap = mapper_table[k].bucket_array[i].inner_heap;
+
+            if (heap == NULL)
                 continue;
-            while (curr != NULL)
+
+            while (heap != NULL)
             {
-                free(curr->key);
-                curr->key = NULL;
-                v_node *vcurr = curr->head;
-                while (vcurr != NULL)
+                free(heap->unique_key);
+
+                chained_value *container = heap->value_container;
+
+                while (container != NULL)
                 {
-                    free(vcurr->value);
-                    vcurr->value = NULL;
-                    v_node *temp = vcurr->next;
-                    free(vcurr);
-                    vcurr = temp;
+                    free(container->linked_value);
+                    container->linked_value = NULL;
+                    chained_value *temp = container->next;
+                    free(container);
+                    container = temp;
                 }
-                vcurr = NULL;
-                k_node *tempK = curr->next;
-                free(curr);
-                curr = tempK;
+                container = NULL;
+
+                bucket_chained_kv *inner_key = heap->next;
+
+                free(heap);
+
+                heap = inner_key;
             }
-            curr = NULL;
+            heap = NULL;
         }
     }
 
     for (int j = 0; j < num_reducers; j++)
     {
-        void *arg = malloc(4);
-        *(int *)arg = j;
-        pthread_create(&all_reducers[j], NULL, reducer_wrapper, arg);
+        void *rad_arg = malloc(sizeof(int));
+        *(int *)rad_arg = j;
+        pthread_create(&all_reducers[j], NULL, reducer_runner, rad_arg);
     }
 
     for (int m = 0; m < num_reducers; m++)
@@ -391,28 +410,36 @@ void MR_Run(int argc, char *argv[],
     {
         for (int i = 0; i < table_buckets; i++)
         {
-            k_node *curr = reducer_table[k].map[i].head;
-            if (curr == NULL)
+            bucket_chained_kv *heap = reducer_table[k].bucket_array[i].inner_heap;
+            if (heap == NULL)
                 continue;
-            while (curr != NULL)
+
+            while (heap != NULL)
             {
-                free(curr->key);
-                curr->key = NULL;
-                v_node *vcurr = curr->head;
-                while (vcurr != NULL)
+                free(heap->unique_key);
+
+                heap->unique_key = NULL;
+
+                chained_value *container = heap->value_container;
+
+                while (container != NULL)
                 {
-                    free(vcurr->value);
-                    vcurr->value = NULL;
-                    v_node *temp = vcurr->next;
-                    free(vcurr);
-                    vcurr = temp;
+                    free(container->linked_value);
+                    container->linked_value = NULL;
+                    chained_value *temp = container->next;
+                    free(container);
+                    container = temp;
                 }
-                vcurr = NULL;
-                k_node *tempK = curr->next;
-                free(curr);
-                curr = tempK;
+
+                container = NULL;
+
+                bucket_chained_kv *inner_key = heap->next;
+
+                free(heap);
+
+                heap = inner_key;
             }
-            curr = NULL;
+            heap = NULL;
         }
     }
 
