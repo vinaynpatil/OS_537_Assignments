@@ -34,9 +34,9 @@ int main_checker(int fd){
   int num_data_blocks = sb->nblocks;
   int num_inodes = sb->ninodes;
   int num_inode_blocks = num_inodes / IPB;
-  int bit_block_location = BBLOCK(BSIZE,num_inodes);
+  int last_bit_block_location = BBLOCK((file_system_size-1),num_inodes);
 
-  if(file_system_size <= bit_block_location+num_data_blocks){
+  if(file_system_size <= last_bit_block_location+num_data_blocks){
     fprintf(stderr,"ERROR: superblock is corrupted.\n");
     return 1;
   }
@@ -58,7 +58,7 @@ int main_checker(int fd){
     if(dip[i].type!=0){
       for(int j=0;j<NDIRECT;j++){
         int addr = dip[i].addrs[j];
-        if(addr!=0 && (addr <= bit_block_location || addr >= file_system_size)){
+        if(addr!=0 && (addr <= last_bit_block_location || addr >= file_system_size)){
           fprintf(stderr,"ERROR: bad direct address in inode.\n");
           return 1;
         }
@@ -71,14 +71,14 @@ int main_checker(int fd){
       int addr = dip[i].addrs[NDIRECT];
 
       if(addr!=0){
-        if(addr <= bit_block_location || addr >= file_system_size){
+        if(addr <= last_bit_block_location || addr >= file_system_size){
           fprintf(stderr,"ERROR: bad indirect address in inode.\n");
           return 1;
         }
         uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
         for (int j = 0; j < BSIZE/sizeof(uint); ++j) {
           int iaddr = indirect_addr[j];
-          if(iaddr!=0 && (iaddr <= bit_block_location || iaddr >= file_system_size)){
+          if(iaddr!=0 && (iaddr <= last_bit_block_location || iaddr >= file_system_size)){
             fprintf(stderr,"ERROR: bad indirect address in inode.\n");
             return 1;
           }
@@ -90,8 +90,63 @@ int main_checker(int fd){
 
   // -----------------------CHECK 4-----------------------
 
+  for(int i=0;i<num_inodes;i++){
+    if(dip[i].type==1){
+      struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[i].addrs[0] * BSIZE);
+      if(strcmp(dent[0].name, ".")!=0 || strcmp(dent[1].name, "..")!=0 || dent[0].inum!=i){
+        fprintf(stderr,"ERROR: directory not properly formatted.\n");
+        return 1;
+      }
+    }
+  }
 
-  //struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[i].addrs[j] * BSIZE);
+  // -----------------------CHECK 5-----------------------
+
+  for(int i=0;i<num_inodes;i++){
+    if(dip[i].type!=0){
+      for(int j=0;j<NDIRECT;j++){
+        int addr = dip[i].addrs[j];
+        if(addr!=0){
+          int bit_block_num = BBLOCK(addr,num_inodes);
+          int bit_location = addr % BPB;
+          uchar* bit_buf = (uchar*) (img_ptr + BSIZE * bit_block_num);
+          if((bit_buf[bit_location/8] & 1) == 0){
+            fprintf(stderr,"ERROR: address used by inode but marked free in bitmap.\n");
+            return 1;
+          }
+        }
+      }
+    }
+  }
+
+  for(int i=0;i<num_inodes;i++){
+    if(dip[i].type!=0){
+      int addr = dip[i].addrs[NDIRECT];
+
+      if(addr!=0){
+        if(addr <= last_bit_block_location || addr >= file_system_size){
+          fprintf(stderr,"ERROR: bad indirect address in inode.\n");
+          return 1;
+        }
+        uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
+        for (int j = 0; j < BSIZE/sizeof(uint); ++j) {
+          int iaddr = indirect_addr[j];
+          if(iaddr!=0){
+            int bit_block_num = BBLOCK(iaddr,num_inodes);
+            int bit_location = iaddr % BPB;
+            uchar* bit_buf = (uchar*) (img_ptr + BSIZE * bit_block_num);
+            if((bit_buf[bit_location/8] & 1) == 0){
+              fprintf(stderr,"ERROR: address used by inode but marked free in bitmap.\n");
+              return 1;
+            }
+          }
+        }
+      }
+
+    }
+  }
+
+
 
 
   return 0;
