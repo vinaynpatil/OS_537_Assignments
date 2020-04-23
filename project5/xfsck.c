@@ -406,6 +406,61 @@ for(int i=0;i<num_inodes;i++){
   }
 }
 
+// -----------------------CHECK 12-----------------------
+
+for(int i=0;i<num_inodes;i++){
+  if(dip[i].type==1){
+    int count_dir_refs = 0;
+
+    for(int j=0;j<num_inodes;j++){
+      if(dip[j].type==1){
+        for(int k=0;k<NDIRECT;k++){
+          if(dip[j].addrs[k]!=0){
+
+            struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
+
+            for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
+              if(strcmp(dent[l].name,".")!=0 && strcmp(dent[l].name,"..")!=0 && dent[l].inum==i){
+                count_dir_refs++;
+              }
+            }
+          }
+        }
+
+        int addr = dip[j].addrs[NDIRECT];
+
+        if(addr!=0){
+          uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
+          for (int k = 0; k < BSIZE/sizeof(uint); ++k) {
+            if(indirect_addr[k]!=0){
+
+              struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
+
+              for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
+                if(strcmp(dent[l].name,".")!=0 && strcmp(dent[l].name,"..")!=0 && dent[l].inum==i){
+                  count_dir_refs++;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    if(i==1 && count_dir_refs!=0){
+      fprintf(stderr,"ERROR: directory appears more than once in file system.\n");
+      return 1;
+    }
+
+    if(i!=1 && count_dir_refs!=1){
+      fprintf(stderr,"ERROR: directory appears more than once in file system.\n");
+      return 1;
+    }
+
+  }
+}
+
+
 
   return 0;
 }
