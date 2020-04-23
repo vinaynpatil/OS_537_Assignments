@@ -248,7 +248,7 @@ for(int i=0;i<num_inodes;i++){
     int size =  (int)dip[i].size;
 
     if(!(((blocks_used-1)*BSIZE < size) && (size <= blocks_used*BSIZE))){
-      fprintf(stderr, "%d %d %d", dip[i].size, (blocks_used-1)*BSIZE, blocks_used*BSIZE);
+      fprintf(stderr, "ERROR: incorrect file size in inode.\n");
       return 1;
     }
 
