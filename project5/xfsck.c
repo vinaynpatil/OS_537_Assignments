@@ -269,7 +269,7 @@ for(int i=0;i<num_inodes;i++){
             struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
 
             for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-              if(strcmp(dent[l].name,"")!=0 && strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
+              if(strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
                 flag = 1;
                 break;
               }
@@ -294,7 +294,7 @@ for(int i=0;i<num_inodes;i++){
               struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
 
               for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-                if(strcmp(dent[l].name,"")!=0 && strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
+                if(strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
                   flag = 1;
                   break;
                 }
@@ -372,7 +372,7 @@ for(int i=0;i<num_inodes;i++){
             struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
 
             for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-              if(strcmp(dent[l].name,"")!=0 && dent[l].inum==i){
+              if(dent[l].inum==i){
                 count_file_refs++;
               }
             }
@@ -389,7 +389,7 @@ for(int i=0;i<num_inodes;i++){
               struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
 
               for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-                if(strcmp(dent[l].name,"")!=0 && dent[l].inum==i){
+                if(dent[l].inum==i){
                   count_file_refs++;
                 }
               }
