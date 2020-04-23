@@ -34,6 +34,7 @@ int main_checker(int fd){
   int num_data_blocks = sb->nblocks;
   int num_inodes = sb->ninodes;
   int num_inode_blocks = num_inodes / IPB;
+  int first_bit_block_location = BBLOCK(0,num_inodes);
   int last_bit_block_location = BBLOCK((file_system_size-1),num_inodes);
 
   if(file_system_size <= last_bit_block_location+num_data_blocks){
@@ -124,10 +125,6 @@ int main_checker(int fd){
       int addr = dip[i].addrs[NDIRECT];
 
       if(addr!=0){
-        if(addr <= last_bit_block_location || addr >= file_system_size){
-          fprintf(stderr,"ERROR: bad indirect address in inode.\n");
-          return 1;
-        }
         uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
         for (int j = 0; j < BSIZE/sizeof(uint); ++j) {
           int iaddr = indirect_addr[j];
@@ -146,8 +143,179 @@ int main_checker(int fd){
     }
   }
 
+  // -----------------------CHECK 6-----------------------
+/*
 
+for(int i=first_bit_block_location;i<=last_bit_block_location;i++){
+  uchar* bit_buf = (uchar*) (img_ptr + BSIZE * i);
+  int j=0;
+  if(i==first_bit_block_location){
+    j = first_bit_block_location + 1;
+  }
+  for(; j < BSIZE*8; j++){
+    if((bit_buf[j/8] & 1) == 1){
 
+      int addr_to_check = j + ((BSIZE*8)*(last_bit_block_location - i));
+
+      int flag = 0;
+
+      for(int k=0;k<num_inodes;k++){
+        if(dip[k].type!=0){
+          for(int h=0;h<NDIRECT;h++){
+            int addr = dip[k].addrs[h];
+            if(addr == addr_to_check){
+              flag = 1;
+              break;
+            }
+          }
+        }
+        if(flag == 1){
+          break;
+        }
+      }
+
+      for(int k=0;k<num_inodes;k++){
+        if(dip[k].type!=0){
+          int addr = dip[k].addrs[NDIRECT];
+          if(addr!=0){
+            uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
+            for (int h = 0; h < BSIZE/sizeof(uint); ++h) {
+              int iaddr = indirect_addr[h];
+              if(iaddr == addr_to_check){
+                flag = 1;
+                break;
+              }
+            }
+          }
+        }
+        if(flag==1){
+          break;
+        }
+      }
+
+      if(flag==0){
+        printf("%d\n", addr_to_check );
+        fprintf(stderr,"ERROR: bitmap marks block in use but it is not in use.\n");
+        return 1;
+      }
+
+    }
+  }
+}
+
+*/
+// -----------------------CHECK 7-----------------------
+
+int *direct_addr_array = (int *) malloc(file_system_size * sizeof(int));
+
+for(int i=0;i<num_inodes;i++){
+  if(dip[i].type!=0){
+    for(int j=0;j<NDIRECT;j++){
+      int addr = dip[i].addrs[j];
+      if(addr!=0){
+        if(direct_addr_array[addr] != 0){
+          fprintf(stderr,"ERROR: direct address used more than once.\n");
+          return 1;
+        }
+        direct_addr_array[addr]++;
+      }
+    }
+  }
+}
+
+// -----------------------CHECK 8-----------------------
+
+for(int i=0;i<num_inodes;i++){
+  if(dip[i].type == 2){
+    int blocks_used = 0;
+    for(int j=0;j<NDIRECT;j++){
+      if(dip[i].addrs[j]!=0){
+        blocks_used++;
+      }
+    }
+
+    int addr = dip[i].addrs[NDIRECT];
+
+    if(addr!=0){
+      uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
+      for (int j = 0; j < BSIZE/sizeof(uint); ++j) {
+        if(indirect_addr[j]!=0){
+          blocks_used++;
+        }
+      }
+    }
+
+    if((dip[i].size <= (blocks_used-1)*BSIZE) || (dip[i].size > blocks_used*BSIZE)){
+      fprintf(stderr,"ERROR: incorrect file size in inode.\n");
+      return 1;
+    }
+
+  }
+}
+
+// -----------------------CHECK 9-----------------------
+
+for(int i=0;i<num_inodes;i++){
+  if(dip[i].type!=0){
+    int flag = 0;
+
+    for(int j=0;j<num_inodes;j++){
+      if(dip[j].type==1){
+        for(int k=0;j<NDIRECT;k++){
+          if(dip[j].addrs[k]!=0){
+
+            struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
+
+            for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
+              if(strcmp(dent[l].name, ".")!=0 &&  dent[l].inum==i){
+                flag = 1;
+                break;
+              }
+            }
+          }
+          if(flag==1){
+            break;
+          }
+        }
+
+        if(flag==1){
+          break;
+        }
+
+        int addr = dip[j].addrs[NDIRECT];
+
+        if(addr!=0){
+          uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
+          for (int k = 0; k < BSIZE/sizeof(uint); ++k) {
+            if(indirect_addr[k]!=0){
+
+              struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
+
+              for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
+                if(strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
+                  flag = 1;
+                  break;
+                }
+              }
+            }
+            if(flag==1){
+              break;
+            }
+          }
+        }
+      }
+      if(flag==1){
+        break;
+      }
+    }
+
+    if(flag==0){
+      fprintf(stderr,"ERROR: inode marked used but not found in a directory.\n");
+      return 1;
+    }
+
+  }
+}
 
   return 0;
 }
