@@ -329,7 +329,7 @@ for(int i=0;i<num_inodes;i++){
           if(dip[j].addrs[k]!=0){
             struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
             for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-              if(strcmp(dent[l].name,"")!=0 && dip[dent[l].inum].type == 0){
+              if(dent[l].inum!=0 && dip[dent[l].inum].type == 0){
                 fprintf(stderr,"ERROR: inode referred to in directory but marked free.\n");
                 return 1;
               }
@@ -347,7 +347,7 @@ for(int i=0;i<num_inodes;i++){
 
               struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
               for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-                if(strcmp(dent[l].name,"")!=0 && dip[dent[l].inum].type == 0){
+                if(dent[l].inum!=0 && dip[dent[l].inum].type == 0){
                   fprintf(stderr,"ERROR: inode referred to in directory but marked free.\n");
                   return 1;
                 }
