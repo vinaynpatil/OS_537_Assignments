@@ -102,7 +102,7 @@ int main_checker(int fd){
   }
 
   // -----------------------CHECK 5-----------------------
-/*
+
   for(int i=0;i<num_inodes;i++){
     if(dip[i].type!=0){
       for(int j=0;j<NDIRECT;j++){
@@ -111,17 +111,13 @@ int main_checker(int fd){
           int bit_block_num = BBLOCK(addr,num_inodes);
           int bit_location = addr % BPB;
           uchar* bit_buf = (uchar*) (img_ptr + BSIZE * bit_block_num);
-          if((bit_buf[bit_location/8] & 1) == 0){
+          if((bit_buf[bit_location/8] & (0x1 << (bit_location%8)))==0){
             fprintf(stderr,"ERROR: address used by inode but marked free in bitmap.\n");
             return 1;
           }
         }
       }
-    }
-  }
 
-  for(int i=0;i<num_inodes;i++){
-    if(dip[i].type!=0){
       int addr = dip[i].addrs[NDIRECT];
 
       if(addr!=0){
@@ -132,7 +128,7 @@ int main_checker(int fd){
             int bit_block_num = BBLOCK(iaddr,num_inodes);
             int bit_location = iaddr % BPB;
             uchar* bit_buf = (uchar*) (img_ptr + BSIZE * bit_block_num);
-            if((bit_buf[bit_location/8] & 1) == 0){
+            if((bit_buf[bit_location/8] & (0x1 << (bit_location%8)))==0){
               fprintf(stderr,"ERROR: address used by inode but marked free in bitmap.\n");
               return 1;
             }
@@ -140,11 +136,12 @@ int main_checker(int fd){
         }
       }
 
+
     }
   }
-*/
+
   // -----------------------CHECK 6-----------------------
-/*
+
 
 for(int i=first_bit_block_location;i<=last_bit_block_location;i++){
   uchar* bit_buf = (uchar*) (img_ptr + BSIZE * i);
@@ -153,7 +150,7 @@ for(int i=first_bit_block_location;i<=last_bit_block_location;i++){
     j = first_bit_block_location + 1;
   }
   for(; j < BSIZE*8; j++){
-    if((bit_buf[j/8] & 1) == 1){
+    if((bit_buf[j/8] & (0x1 << (j%8)))!=0){
 
       int addr_to_check = j + ((BSIZE*8)*(last_bit_block_location - i));
 
@@ -161,7 +158,7 @@ for(int i=first_bit_block_location;i<=last_bit_block_location;i++){
 
       for(int k=0;k<num_inodes;k++){
         if(dip[k].type!=0){
-          for(int h=0;h<NDIRECT;h++){
+          for(int h=0;h<=NDIRECT;h++){
             int addr = dip[k].addrs[h];
             if(addr == addr_to_check){
               flag = 1;
@@ -194,7 +191,6 @@ for(int i=first_bit_block_location;i<=last_bit_block_location;i++){
       }
 
       if(flag==0){
-        printf("%d\n", addr_to_check );
         fprintf(stderr,"ERROR: bitmap marks block in use but it is not in use.\n");
         return 1;
       }
@@ -203,7 +199,7 @@ for(int i=first_bit_block_location;i<=last_bit_block_location;i++){
   }
 }
 
-*/
+
 // -----------------------CHECK 7-----------------------
 
 int *direct_addr_array = (int *) malloc(file_system_size * sizeof(int));
