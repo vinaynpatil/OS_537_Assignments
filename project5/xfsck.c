@@ -102,7 +102,7 @@ int main_checker(int fd){
   }
 
   // -----------------------CHECK 5-----------------------
-
+/*
   for(int i=0;i<num_inodes;i++){
     if(dip[i].type!=0){
       for(int j=0;j<NDIRECT;j++){
@@ -142,7 +142,7 @@ int main_checker(int fd){
 
     }
   }
-
+*/
   // -----------------------CHECK 6-----------------------
 /*
 
@@ -245,8 +245,10 @@ for(int i=0;i<num_inodes;i++){
       }
     }
 
-    if((dip[i].size <= (blocks_used-1)*BSIZE) || (dip[i].size > blocks_used*BSIZE)){
-      fprintf(stderr,"ERROR: incorrect file size in inode.\n");
+    int size =  (int)dip[i].size;
+
+    if(!(((blocks_used-1)*BSIZE < size) && (size <= blocks_used*BSIZE))){
+      fprintf(stderr, "%d %d %d", dip[i].size, (blocks_used-1)*BSIZE, blocks_used*BSIZE);
       return 1;
     }
 
@@ -261,13 +263,13 @@ for(int i=0;i<num_inodes;i++){
 
     for(int j=0;j<num_inodes;j++){
       if(dip[j].type==1){
-        for(int k=0;j<NDIRECT;k++){
+        for(int k=0;k<NDIRECT;k++){
           if(dip[j].addrs[k]!=0){
 
             struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
 
             for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-              if(strcmp(dent[l].name, ".")!=0 &&  dent[l].inum==i){
+              if(strcmp(dent[l].name,"")!=0 && strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
                 flag = 1;
                 break;
               }
@@ -292,7 +294,7 @@ for(int i=0;i<num_inodes;i++){
               struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
 
               for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
-                if(strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
+                if(strcmp(dent[l].name,"")!=0 && strcmp(dent[l].name, ".")!=0 && dent[l].inum==i){
                   flag = 1;
                   break;
                 }
@@ -317,19 +319,60 @@ for(int i=0;i<num_inodes;i++){
   }
 }
 
+
+// -----------------------CHECK 10-----------------------
+
+
+    for(int j=0;j<num_inodes;j++){
+      if(dip[j].type==1){
+        for(int k=0;k<NDIRECT;k++){
+          if(dip[j].addrs[k]!=0){
+            struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + dip[j].addrs[k] * BSIZE);
+            for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
+              if(strcmp(dent[l].name,"")!=0 && dip[dent[l].inum].type == 0){
+                fprintf(stderr,"ERROR: inode referred to in directory but marked free.\n");
+                return 1;
+              }
+            }
+          }
+        }
+
+
+        int addr = dip[j].addrs[NDIRECT];
+
+        if(addr!=0){
+          uint* indirect_addr = (uint*) (img_ptr + BSIZE * addr);
+          for (int k = 0; k < BSIZE/sizeof(uint); ++k) {
+            if(indirect_addr[k]!=0){
+
+              struct xv6_dirent *dent = (struct xv6_dirent *) (img_ptr + indirect_addr[k] * BSIZE);
+              for(int l=0;l<BSIZE / sizeof(struct xv6_dirent);l++){
+                if(strcmp(dent[l].name,"")!=0 && dip[dent[l].inum].type == 0){
+                  fprintf(stderr,"ERROR: inode referred to in directory but marked free.\n");
+                  return 1;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+
+
   return 0;
 }
 
 int main(int argc, char const *argv[]) {
   if(argc!=2){
-    fprintf(stderr,"Usage: xfsck <file_system_image>");
+    fprintf(stderr,"Usage: xfsck <file_system_image>\n");
     exit(1);
   }
 
   int fd = open(argv[1], O_RDONLY);
 
   if(fd<0){
-    fprintf(stderr,"image not found.");
+    fprintf(stderr,"image not found.\n");
     exit(1);
   }
 
