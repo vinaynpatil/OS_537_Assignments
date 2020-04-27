@@ -19,6 +19,14 @@ extern void trapret(void);
 
 static void wakeup1(void *chan);
 
+struct sem_struct {
+  int used;
+  int count;
+  struct spinlock lock;
+};
+
+struct sem_struct semaphore_array[NUM_SEMAPHORES];
+
 void
 pinit(void)
 {
@@ -564,14 +572,76 @@ procdump(void)
 }
 
 int sem_init(int* sem_id, int count){
+  for(int i=0;i<NUM_SEMAPHORES;i++){
+    acquire(&semaphore_array[i].lock);
+    if(semaphore_array[i].used == 0){
+      semaphore_array[i].count = count;
+      semaphore_array[i].used = 1;
+      sem_id = &i;
+      release(&semaphore_array[i].lock);
+      return 0;
+    }
+    release(&semaphore_array[i].lock);
+  }
 
+  return -1;
 }
+
 int sem_wait(int sem_id){
-
+  if(sem_id<NUM_SEMAPHORES){
+    acquire(&semaphore_array[sem_id].lock);
+    if(semaphore_array[sem_id].used!=0){
+      semaphore_array[sem_id].count = semaphore_array[sem_id].count - 1;
+      while(semaphore_array[sem_id].count < 0){
+        sleep(&semaphore_array[sem_id],&semaphore_array[sem_id].lock);
+      }
+      release(&semaphore_array[sem_id].lock);
+      return 0;
+    }
+    else{
+      release(&semaphore_array[sem_id].lock);
+      return -1;
+    }
+  }
+  else{
+    return -1;
+  }
 }
+
 int sem_post(int sem_id){
-
+  if(sem_id<NUM_SEMAPHORES){
+    acquire(&semaphore_array[sem_id].lock);
+    if(semaphore_array[sem_id].used!=0){
+      semaphore_array[sem_id].count = semaphore_array[sem_id].count + 1;
+      wakeup(&semaphore_array[sem_id]);
+      release(&semaphore_array[sem_id].lock);
+      return 0;
+    }
+    else{
+      release(&semaphore_array[sem_id].lock);
+      return -1;
+    }
+  }
+  else{
+    return -1;
+  }
 }
+
 int sem_destroy(int sem_id){
-  
+  if(sem_id<NUM_SEMAPHORES){
+    acquire(&semaphore_array[sem_id].lock);
+    if(semaphore_array[sem_id].used!=0){
+      semaphore_array[sem_id].count = 0;
+      semaphore_array[sem_id].used = 0;
+      release(&semaphore_array[sem_id].lock);
+      return 0;
+    }
+    else{
+      release(&semaphore_array[sem_id].lock);
+      return -1;
+    }
+  }
+  else{
+    return -1;
+  }
 }

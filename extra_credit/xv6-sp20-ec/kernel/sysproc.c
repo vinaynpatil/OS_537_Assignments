@@ -132,11 +132,11 @@ sys_sem_init(void)
   int *sem_id;
   int count;
 
-  if (argptr(0, (int *)&sem_id, sizeof(*sem_id)) < 0){
+  if (argint(0, (int *)&sem_id) < 0){
     return -1;
   }
 
-  if(argint(0, &count) < 0)
+  if(argint(1, &count) < 0)
     return -1;
 
   return sem_init(sem_id, count);
