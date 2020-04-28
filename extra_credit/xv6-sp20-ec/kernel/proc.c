@@ -31,6 +31,9 @@ void
 pinit(void)
 {
   initlock(&ptable.lock, "ptable");
+  for(int i=0;i<NUM_SEMAPHORES;i++){
+    initlock(&semaphore_array[i].lock, "sem_arr");
+  }
 }
 
 // Look in the process table for an UNUSED proc.
@@ -577,7 +580,7 @@ int sem_init(int* sem_id, int count){
     if(semaphore_array[i].used == 0){
       semaphore_array[i].count = count;
       semaphore_array[i].used = 1;
-      sem_id = &i;
+      *sem_id = i;
       release(&semaphore_array[i].lock);
       return 0;
     }
@@ -591,10 +594,10 @@ int sem_wait(int sem_id){
   if(sem_id<NUM_SEMAPHORES){
     acquire(&semaphore_array[sem_id].lock);
     if(semaphore_array[sem_id].used!=0){
-      semaphore_array[sem_id].count = semaphore_array[sem_id].count - 1;
-      while(semaphore_array[sem_id].count < 0){
+      while(semaphore_array[sem_id].count <= 0){
         sleep(&semaphore_array[sem_id],&semaphore_array[sem_id].lock);
       }
+      semaphore_array[sem_id].count = semaphore_array[sem_id].count - 1;
       release(&semaphore_array[sem_id].lock);
       return 0;
     }
@@ -607,6 +610,7 @@ int sem_wait(int sem_id){
     return -1;
   }
 }
+
 
 int sem_post(int sem_id){
   if(sem_id<NUM_SEMAPHORES){
